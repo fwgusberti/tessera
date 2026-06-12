@@ -1,103 +1,99 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useState } from "react";
+import { api } from "@/lib/api";
+import type { Metrics, Space } from "@/lib/types";
+
+interface StatCardProps {
+  label: string;
+  value: string | number;
+}
+
+function StatCard({ label, value }: StatCardProps) {
+  return (
+    <div className="bg-white rounded border p-5">
+      <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">{label}</p>
+      <p className="text-3xl font-bold text-gray-900">{value}</p>
+    </div>
+  );
+}
+
+interface NavCardProps {
+  href: string;
+  title: string;
+  description: string;
+}
+
+function NavCard({ href, title, description }: NavCardProps) {
+  return (
+    <a
+      href={href}
+      className="block bg-white rounded border p-5 hover:border-blue-400 hover:shadow-sm transition-all"
+    >
+      <p className="font-semibold text-gray-900 mb-1">{title}</p>
+      <p className="text-sm text-gray-500">{description}</p>
+    </a>
+  );
+}
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [spaceCount, setSpaceCount] = useState<number | null>(null);
+  const [metrics, setMetrics] = useState<Pick<Metrics, "total_queries" | "documents_with_drift"> | null>(null);
+  const [loading, setLoading] = useState(true);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  useEffect(() => {
+    Promise.all([
+      api.get<{ spaces: Space[] }>("/v1/spaces"),
+      api.get<Metrics>("/v1/metrics"),
+    ])
+      .then(([spacesData, metricsData]) => {
+        setSpaceCount(spacesData.spaces.length);
+        setMetrics({
+          total_queries: metricsData.total_queries,
+          documents_with_drift: metricsData.documents_with_drift,
+        });
+      })
+      .catch(() => {
+        setSpaceCount(null);
+        setMetrics(null);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const dash = "–";
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Tessera</h1>
+        <p className="text-gray-500 mt-1">Living Documentation Platform</p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {loading ? (
+          <>
+            <StatCard label="Spaces" value="…" />
+            <StatCard label="Total Queries" value="…" />
+            <StatCard label="Documents with Drift" value="…" />
+          </>
+        ) : (
+          <>
+            <StatCard label="Spaces" value={spaceCount ?? dash} />
+            <StatCard label="Total Queries" value={metrics?.total_queries ?? dash} />
+            <StatCard label="Documents with Drift" value={metrics?.documents_with_drift ?? dash} />
+          </>
+        )}
+      </div>
+
+      <div>
+        <h2 className="text-lg font-semibold text-gray-800 mb-3">Quick Navigation</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <NavCard href="/search" title="Search" description="Semantic search and AI assistant across your documentation" />
+          <NavCard href="/proposals" title="Proposals" description="Review and approve pending document update proposals" />
+          <NavCard href="/metrics" title="Metrics" description="Platform usage statistics and document health indicators" />
+          <NavCard href="/admin" title="Admin" description="Manage spaces, permissions, connectors, and credentials" />
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </div>
     </div>
   );
 }
