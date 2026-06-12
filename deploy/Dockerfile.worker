@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN pip install hatch
+
+COPY packages/core /app/packages/core
+COPY apps/workers /app/apps/workers
+
+RUN pip install -e /app/packages/core -e /app/apps/workers
+
+WORKDIR /app/apps/workers
+
+CMD ["celery", "-A", "tessera_workers.celery_app", "worker", "--loglevel=info"]

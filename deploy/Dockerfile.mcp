@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN pip install hatch
+
+COPY packages/core /app/packages/core
+COPY apps/mcp-server /app/apps/mcp-server
+
+RUN pip install -e /app/packages/core -e /app/apps/mcp-server
+
+WORKDIR /app/apps/mcp-server
+
+CMD ["python", "-m", "tessera_mcp.server"]

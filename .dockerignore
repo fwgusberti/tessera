@@ -1,0 +1,46 @@
+# Version control
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node.js
+node_modules/
+.next/
+out/
+dist/
+
+# Env files (never in image)
+.env
+.env.*
+!.env.example
+
+# Dev tooling
+.pre-commit-config.yaml
+*.md
+!README.md
+specs/
+.specify/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
