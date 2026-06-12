@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
-import uuid
+from datetime import UTC
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tessera_api.adapters.models import (
+    AgentCredentialModel,
+    AuditRecordModel,
+    ConnectorModel,
+    DocumentModel,
+    DocumentVersionModel,
+    RolePermissionModel,
+    SourceArtifactModel,
+    SpaceModel,
+    UpdateProposalModel,
+    UserModel,
+)
 from tessera_core.domain.entities import (
     AgentCredential,
     AuditRecord,
@@ -19,8 +31,8 @@ from tessera_core.domain.entities import (
     DocumentLifecycleState,
     DocumentVersion,
     RolePermission,
-    Space,
     SourceArtifact,
+    Space,
     UpdateProposal,
     User,
     UserRole,
@@ -36,18 +48,6 @@ from tessera_core.ports.repositories import (
     SourceArtifactRepository,
     SpaceRepository,
     UserRepository,
-)
-from tessera_api.adapters.models import (
-    AgentCredentialModel,
-    AuditRecordModel,
-    ConnectorModel,
-    DocumentModel,
-    DocumentVersionModel,
-    RolePermissionModel,
-    SourceArtifactModel,
-    SpaceModel,
-    UpdateProposalModel,
-    UserModel,
 )
 
 
@@ -270,9 +270,7 @@ class SqlDocumentRepository(DocumentRepository):
 
     async def update_state(self, document_id: UUID, state: DocumentLifecycleState) -> Document:
         await self._session.execute(
-            update(DocumentModel)
-            .where(DocumentModel.id == document_id)
-            .values(state=state.value)
+            update(DocumentModel).where(DocumentModel.id == document_id).values(state=state.value)
         )
         doc = await self.get_by_id(document_id)
         assert doc is not None
@@ -339,8 +337,9 @@ class SqlDocumentVersionRepository(DocumentVersionRepository):
         from sqlalchemy import func
 
         result = await self._session.execute(
-            select(func.coalesce(func.max(DocumentVersionModel.version_number), 0))
-            .where(DocumentVersionModel.document_id == document_id)
+            select(func.coalesce(func.max(DocumentVersionModel.version_number), 0)).where(
+                DocumentVersionModel.document_id == document_id
+            )
         )
         return (result.scalar() or 0) + 1
 
@@ -353,7 +352,7 @@ class SqlChunkRepository(ChunkRepository):
         from sqlalchemy.dialects.postgresql import insert
 
         for chunk in chunks:
-            stmt = insert(type("chunks", (), {"__tablename__": "chunks"})).values(
+            _stmt = insert(type("chunks", (), {"__tablename__": "chunks"})).values(  # noqa: F841
                 id=chunk.id,
                 document_version_id=chunk.document_version_id,
                 document_id=chunk.document_id,
@@ -445,12 +444,12 @@ class SqlConnectorRepository(ConnectorRepository):
         return [_connector_from_model(m) for m in result.scalars().all()]
 
     async def update_sync_status(self, connector_id: UUID, status: str) -> Connector:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         await self._session.execute(
             update(ConnectorModel)
             .where(ConnectorModel.id == connector_id)
-            .values(status=status, last_sync_at=datetime.now(timezone.utc))
+            .values(status=status, last_sync_at=datetime.now(UTC))
         )
         connector = await self.get_by_id(connector_id)
         assert connector is not None
@@ -473,7 +472,9 @@ class SqlSourceArtifactRepository(SourceArtifactRepository):
                     source_version=artifact.source_version,
                 )
             )
-            return (await self.get_by_external_id(artifact.connector_id, artifact.external_id)) or artifact
+            return (
+                await self.get_by_external_id(artifact.connector_id, artifact.external_id)
+            ) or artifact
         model = SourceArtifactModel(
             id=artifact.id,
             connector_id=artifact.connector_id,
@@ -487,7 +488,9 @@ class SqlSourceArtifactRepository(SourceArtifactRepository):
         await self._session.flush()
         return _artifact_from_model(model)
 
-    async def get_by_external_id(self, connector_id: UUID, external_id: str) -> SourceArtifact | None:
+    async def get_by_external_id(
+        self, connector_id: UUID, external_id: str
+    ) -> SourceArtifact | None:
         result = await self._session.execute(
             select(SourceArtifactModel).where(
                 SourceArtifactModel.connector_id == connector_id,
@@ -554,7 +557,6 @@ class SqlProposalRepository(ProposalRepository):
         return updated
 
     async def invalidate_pending_for_document(self, document_id: UUID) -> int:
-        from sqlalchemy import text
 
         result = await self._session.execute(
             update(UpdateProposalModel)
@@ -635,12 +637,12 @@ class SqlAgentCredentialRepository(AgentCredentialRepository):
         return _credential_from_model(model) if model else None
 
     async def revoke(self, credential_id: UUID) -> AgentCredential:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         await self._session.execute(
             update(AgentCredentialModel)
             .where(AgentCredentialModel.id == credential_id)
-            .values(revoked_at=datetime.now(timezone.utc))
+            .values(revoked_at=datetime.now(UTC))
         )
         result = await self._session.execute(
             select(AgentCredentialModel).where(AgentCredentialModel.id == credential_id)
@@ -661,13 +663,11 @@ class SqlAuditRepository(AuditRepository):
             action=record.action,
             entity_type=record.entity_type,
             entity_id=record.entity_id,
-            metadata=record.metadata,
+            record_metadata=record.metadata,
         )
         self._session.add(model)
 
-    async def list_for_entity(
-        self, entity_type: str, entity_id: UUID
-    ) -> list[AuditRecord]:
+    async def list_for_entity(self, entity_type: str, entity_id: UUID) -> list[AuditRecord]:
         result = await self._session.execute(
             select(AuditRecordModel)
             .where(
@@ -687,7 +687,7 @@ class SqlAuditRepository(AuditRepository):
                 entity_type=m.entity_type,
                 entity_id=m.entity_id,
                 occurred_at=m.occurred_at,
-                metadata=m.metadata or {},
+                metadata=m.record_metadata or {},
             )
             for m in result.scalars().all()
         ]

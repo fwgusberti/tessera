@@ -18,19 +18,19 @@ class AnswerRequest(BaseModel):
 
 @router.post("/assistant/answer")
 async def answer(body: AnswerRequest, request: Request) -> dict:
+    from tessera_api.adapters.audit import write_audit
     from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.embeddings import VoyageEmbeddingProvider
+    from tessera_api.adapters.embeddings import OllamaEmbeddingProvider
     from tessera_api.adapters.llm import AnthropicLLMProvider
     from tessera_api.adapters.repo import SqlSpaceRepository
-    from tessera_api.adapters.audit import write_audit
     from tessera_api.auth.oidc import require_user
-    from tessera_api.rag.assistant import generate_answer, AssistantResponse
+    from tessera_api.rag.assistant import generate_answer
     from tessera_api.rag.retrieval import acl_first_search
     from tessera_core.domain.entities import Confidentiality
 
     user_info = await require_user(request)
 
-    embedding_provider = VoyageEmbeddingProvider()
+    embedding_provider = OllamaEmbeddingProvider()
     embeddings = await embedding_provider.embed([body.query])
     query_embedding = embeddings[0]
 

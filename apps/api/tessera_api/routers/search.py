@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 router = APIRouter(tags=["search"])
@@ -20,15 +20,15 @@ class SearchRequest(BaseModel):
 @router.post("/search")
 async def search(body: SearchRequest, request: Request) -> dict:
     from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.embeddings import VoyageEmbeddingProvider
+    from tessera_api.adapters.embeddings import OllamaEmbeddingProvider
     from tessera_api.adapters.repo import SqlSpaceRepository
     from tessera_api.auth.oidc import require_user
-    from tessera_api.rag.retrieval import SearchResult, acl_first_search
     from tessera_api.rag.citations import build_citation
+    from tessera_api.rag.retrieval import SearchResult, acl_first_search
     from tessera_core.domain.entities import Confidentiality
 
-    user_info = await require_user(request)
-    embedding_provider = VoyageEmbeddingProvider()
+    await require_user(request)
+    embedding_provider = OllamaEmbeddingProvider()
     embeddings = await embedding_provider.embed([body.query])
     query_embedding = embeddings[0]
 

@@ -25,6 +25,24 @@ services:
       timeout: 5s
       retries: 5
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    entrypoint: >
+      /bin/sh -c "ollama serve &
+      sleep 5 &&
+      ollama pull nomic-embed-text &&
+      wait"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list | grep nomic-embed-text"]
+      interval: 10s
+      timeout: 30s
+      retries: 30
+      start_period: 10s
+
   api:
     build:
       context: ..
@@ -39,12 +57,13 @@ services:
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
     volumes:
       - ../apps/api:/app/apps/api
@@ -58,12 +77,13 @@ services:
       DATABASE_URL: postgresql+psycopg://tessera:tessera@postgres:5432/tessera
       REDIS_URL: redis://redis:6379/0
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
     volumes:
       - ../apps/workers:/app/apps/workers
@@ -95,3 +115,4 @@ services:
 
 volumes:
   postgres_data:
+  ollama_data:

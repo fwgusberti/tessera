@@ -15,13 +15,13 @@ class Settings(BaseSettings):
     oidc_client_secret: str = ""
 
     anthropic_api_key: str = ""
-    voyage_api_key: str = ""
 
+    ollama_base_url: str = "http://ollama:11434"
     llm_default_model: str = "claude-opus-4-8"
     llm_draft_model: str = "claude-haiku-4-5"
     llm_economy_model: str = "claude-sonnet-4-6"
-    embedding_model: str = "voyage-3"
-    embedding_dimensions: int = 1024
+    embedding_model: str = "nomic-embed-text"
+    embedding_dimensions: int = 768
 
     log_level: str = "INFO"
     environment: str = "development"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 
 async def _get_session() -> AsyncSession:
@@ -19,10 +19,13 @@ async def _get_session() -> AsyncSession:
 
 async def _do_index(version_id: UUID, document_id: UUID, space_id: UUID) -> None:
     from tessera_workers.indexing.chunker import chunk_document
-    from tessera_core.domain.entities import Confidentiality
 
     async with await _get_session() as session:
-        from tessera_api.adapters.repo import SqlDocumentVersionRepository, SqlDocumentRepository, SqlChunkRepository
+        from tessera_api.adapters.repo import (
+            SqlChunkRepository,
+            SqlDocumentRepository,
+            SqlDocumentVersionRepository,
+        )
 
         version_repo = SqlDocumentVersionRepository(session)
         doc_repo = SqlDocumentRepository(session)
@@ -42,13 +45,13 @@ async def _do_index(version_id: UUID, document_id: UUID, space_id: UUID) -> None
         )
 
         # Embed chunks
-        from tessera_api.adapters.embeddings import VoyageEmbeddingProvider
+        from tessera_api.adapters.embeddings import OllamaEmbeddingProvider
 
-        embedding_provider = VoyageEmbeddingProvider()
+        embedding_provider = OllamaEmbeddingProvider()
         texts = [c.text for c in chunks]
         if texts:
             embeddings = await embedding_provider.embed(texts)
-            for chunk, emb in zip(chunks, embeddings):
+            for chunk, emb in zip(chunks, embeddings, strict=False):
                 chunk.embedding = emb
 
         # Remove old chunks and write new ones

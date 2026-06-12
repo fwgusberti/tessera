@@ -39,7 +39,9 @@ class UserModel(Base):
     groups: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
     default_language: Mapped[str] = mapped_column(String(10), nullable=False, default="pt-BR")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class SpaceModel(Base):
@@ -54,11 +56,17 @@ class SpaceModel(Base):
     confidence_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
     default_language: Mapped[str] = mapped_column(String(10), nullable=False, default="pt-BR")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
-    permissions: Mapped[list[RolePermissionModel]] = relationship("RolePermissionModel", back_populates="space")
+    permissions: Mapped[list[RolePermissionModel]] = relationship(
+        "RolePermissionModel", back_populates="space"
+    )
     documents: Mapped[list[DocumentModel]] = relationship("DocumentModel", back_populates="space")
-    connectors: Mapped[list[ConnectorModel]] = relationship("ConnectorModel", back_populates="space")
+    connectors: Mapped[list[ConnectorModel]] = relationship(
+        "ConnectorModel", back_populates="space"
+    )
 
 
 class RolePermissionModel(Base):
@@ -66,7 +74,9 @@ class RolePermissionModel(Base):
     __table_args__ = (UniqueConstraint("space_id", "idp_group", name="uq_space_group"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    space_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False)
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
     idp_group: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), nullable=False)
     max_confidentiality: Mapped[str] = mapped_column(String(50), nullable=False, default="internal")
@@ -80,8 +90,12 @@ class DocumentModel(Base):
     __table_args__ = (Index("ix_documents_space_state", "space_id", "state"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    space_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False)
-    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     language: Mapped[str] = mapped_column(String(10), nullable=False, default="pt-BR")
     confidentiality: Mapped[str] = mapped_column(String(50), nullable=False, default="internal")
@@ -90,47 +104,73 @@ class DocumentModel(Base):
     state: Mapped[str] = mapped_column(String(50), nullable=False, default="ingested")
     current_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     space: Mapped[SpaceModel] = relationship("SpaceModel", back_populates="documents")
-    versions: Mapped[list[DocumentVersionModel]] = relationship("DocumentVersionModel", back_populates="document", foreign_keys="[DocumentVersionModel.document_id]")
-    proposals: Mapped[list[UpdateProposalModel]] = relationship("UpdateProposalModel", back_populates="document")
+    versions: Mapped[list[DocumentVersionModel]] = relationship(
+        "DocumentVersionModel",
+        back_populates="document",
+        foreign_keys="[DocumentVersionModel.document_id]",
+    )
+    proposals: Mapped[list[UpdateProposalModel]] = relationship(
+        "UpdateProposalModel", back_populates="document"
+    )
 
 
 class DocumentVersionModel(Base):
     __tablename__ = "document_versions"
-    __table_args__ = (UniqueConstraint("document_id", "version_number", name="uq_document_version"),)
+    __table_args__ = (
+        UniqueConstraint("document_id", "version_number", name="uq_document_version"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     content_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     frontmatter: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    author_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    approver_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    author_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    approver_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     source_artifact_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    created_from_proposal_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_from_proposal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    document: Mapped[DocumentModel] = relationship("DocumentModel", back_populates="versions", foreign_keys=[document_id])
+    document: Mapped[DocumentModel] = relationship(
+        "DocumentModel", back_populates="versions", foreign_keys=[document_id]
+    )
 
 
 class ConnectorModel(Base):
     __tablename__ = "connectors"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    space_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False)
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
     type: Mapped[str] = mapped_column(String(50), nullable=False)
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     schedule: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="ok")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     space: Mapped[SpaceModel] = relationship("SpaceModel", back_populates="connectors")
-    source_artifacts: Mapped[list[SourceArtifactModel]] = relationship("SourceArtifactModel", back_populates="connector")
+    source_artifacts: Mapped[list[SourceArtifactModel]] = relationship(
+        "SourceArtifactModel", back_populates="connector"
+    )
 
 
 class SourceArtifactModel(Base):
@@ -141,7 +181,9 @@ class SourceArtifactModel(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    connector_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False)
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False
+    )
     external_id: Mapped[str] = mapped_column(String(500), nullable=False)
     path: Mapped[str] = mapped_column(String(1000), nullable=False)
     source_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -149,7 +191,9 @@ class SourceArtifactModel(Base):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    connector: Mapped[ConnectorModel] = relationship("ConnectorModel", back_populates="source_artifacts")
+    connector: Mapped[ConnectorModel] = relationship(
+        "ConnectorModel", back_populates="source_artifacts"
+    )
 
 
 class UpdateProposalModel(Base):
@@ -157,12 +201,18 @@ class UpdateProposalModel(Base):
     __table_args__ = (Index("ix_update_proposals_document_state", "document_id", "state"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
-    source_artifact_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("source_artifacts.id"), nullable=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    source_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("source_artifacts.id"), nullable=True
+    )
     proposed_markdown_patch: Mapped[str] = mapped_column(Text, nullable=False)
     state: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    decided_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    decided_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     drift_score: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -177,9 +227,13 @@ class AgentCredentialModel(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    scoped_space_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), nullable=False, default=list)
+    scoped_space_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=False, default=list
+    )
     max_confidentiality: Mapped[str] = mapped_column(String(50), nullable=False, default="internal")
-    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -194,5 +248,9 @@ class AuditRecordModel(Base):
     action: Mapped[str] = mapped_column(String(50), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
     entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    record_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )

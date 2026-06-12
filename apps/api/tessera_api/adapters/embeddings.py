@@ -1,19 +1,19 @@
-"""Voyage AI EmbeddingProvider adapter."""
+"""Ollama local EmbeddingProvider adapter."""
 
 from __future__ import annotations
 
 import httpx
 
-from tessera_core.ports.providers import EmbeddingProvider
 from tessera_api.config import get_settings
+from tessera_core.ports.providers import EmbeddingProvider
 
 
-class VoyageEmbeddingProvider(EmbeddingProvider):
-    _VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings"
+class OllamaEmbeddingProvider(EmbeddingProvider):
+    _EMBED_PATH = "/api/embed"
 
     def __init__(self) -> None:
         settings = get_settings()
-        self._api_key = settings.voyage_api_key
+        self._base_url = settings.ollama_base_url
         self._model = settings.embedding_model
         self._dimensions = settings.embedding_dimensions
 
@@ -22,13 +22,10 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         return self._dimensions
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=60.0) as client:
             response = await client.post(
-                self._VOYAGE_API_URL,
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                json={"input": texts, "model": self._model},
-                timeout=30.0,
+                self._EMBED_PATH,
+                json={"model": self._model, "input": texts},
             )
             response.raise_for_status()
-            data = response.json()
-            return [item["embedding"] for item in data["data"]]
+            return response.json()["embeddings"]
