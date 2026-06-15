@@ -29,6 +29,9 @@ dependencies = [
 [tool.hatch.build.targets.wheel]
 packages = ["tessera_api"]
 
+[tool.uv.sources]
+tessera-core = { path = "../../packages/core", editable = true }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=tessera_api --cov-report=term-missing --cov-fail-under=85"
