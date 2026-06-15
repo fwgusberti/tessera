@@ -15,6 +15,7 @@ from tessera_api.adapters.models import (
     ConnectorModel,
     DocumentModel,
     DocumentVersionModel,
+    RefreshTokenModel,
     RolePermissionModel,
     SourceArtifactModel,
     SpaceModel,
@@ -30,6 +31,7 @@ from tessera_core.domain.entities import (
     Document,
     DocumentLifecycleState,
     DocumentVersion,
+    RefreshToken,
     RolePermission,
     SourceArtifact,
     Space,
@@ -164,6 +166,7 @@ def _user_from_model(m: UserModel) -> User:
         is_admin=m.is_admin,
         groups=m.groups or [],
         default_language=m.default_language,
+        password_hash=m.password_hash,
         created_at=m.created_at,
     )
 
@@ -611,6 +614,28 @@ class SqlUserRepository(UserRepository):
         model = result.scalar_one_or_none()
         return _user_from_model(model) if model else None
 
+    async def get_by_email(self, email: str) -> User | None:
+        result = await self._session.execute(
+            select(UserModel).where(UserModel.email == email)
+        )
+        model = result.scalar_one_or_none()
+        return _user_from_model(model) if model else None
+
+    async def create(self, user: User) -> User:
+        model = UserModel(
+            id=user.id,
+            external_subject=user.external_subject,
+            email=user.email,
+            display_name=user.display_name,
+            is_admin=user.is_admin,
+            groups=user.groups,
+            default_language=user.default_language,
+            password_hash=user.password_hash,
+        )
+        self._session.add(model)
+        await self._session.flush()
+        return _user_from_model(model)
+
 
 class SqlAgentCredentialRepository(AgentCredentialRepository):
     def __init__(self, session: AsyncSession) -> None:
@@ -691,3 +716,52 @@ class SqlAuditRepository(AuditRepository):
             )
             for m in result.scalars().all()
         ]
+
+
+def _refresh_token_from_model(m: RefreshTokenModel) -> RefreshToken:
+    return RefreshToken(
+        id=m.id,
+        user_id=m.user_id,
+        token_hash=m.token_hash,
+        issued_at=m.issued_at,
+        expires_at=m.expires_at,
+        is_revoked=m.is_revoked,
+    )
+
+
+class SqlRefreshTokenRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create(self, token: RefreshToken) -> RefreshToken:
+        model = RefreshTokenModel(
+            id=token.id,
+            user_id=token.user_id,
+            token_hash=token.token_hash,
+            expires_at=token.expires_at,
+        )
+        self._session.add(model)
+        await self._session.flush()
+        return _refresh_token_from_model(model)
+
+    async def get_by_hash(self, token_hash: str) -> RefreshToken | None:
+        result = await self._session.execute(
+            select(RefreshTokenModel).where(RefreshTokenModel.token_hash == token_hash)
+        )
+        model = result.scalar_one_or_none()
+        return _refresh_token_from_model(model) if model else None
+
+    async def revoke(self, token_hash: str) -> None:
+        await self._session.execute(
+            update(RefreshTokenModel)
+            .where(RefreshTokenModel.token_hash == token_hash)
+            .values(is_revoked=True)
+        )
+
+    async def delete_by_hash(self, token_hash: str) -> None:
+        result = await self._session.execute(
+            select(RefreshTokenModel).where(RefreshTokenModel.token_hash == token_hash)
+        )
+        model = result.scalar_one_or_none()
+        if model:
+            await self._session.delete(model)

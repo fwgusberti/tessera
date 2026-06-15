@@ -38,9 +38,14 @@ class UserModel(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     groups: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
     default_language: Mapped[str] = mapped_column(String(10), nullable=False, default="pt-BR")
+    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    refresh_tokens: Mapped[list[RefreshTokenModel]] = relationship(
+        "RefreshTokenModel", back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -236,6 +241,22 @@ class AgentCredentialModel(Base):
     )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RefreshTokenModel(Base):
+    __tablename__ = "refresh_tokens"
+    __table_args__ = (Index("ix_refresh_tokens_user_active", "user_id", "is_revoked"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    user: Mapped[UserModel] = relationship("UserModel", back_populates="refresh_tokens")
 
 
 class AuditRecordModel(Base):

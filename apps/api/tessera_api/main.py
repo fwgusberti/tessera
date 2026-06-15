@@ -3,13 +3,24 @@
 from __future__ import annotations
 
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 from tessera_api.config import get_settings
-from tessera_api.routers import spaces, documents, search, assistant, proposals, connectors, agent_credentials, admin, metrics
+from tessera_api.routers import (
+    admin,
+    agent_credentials,
+    assistant,
+    auth,
+    connectors,
+    documents,
+    metrics,
+    proposals,
+    search,
+    spaces,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -33,6 +44,15 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        detail = exc.detail
+        if isinstance(detail, dict) and "error" in detail:
+            content = detail
+        else:
+            content = {"error": {"code": "http_error", "message": str(detail)}}
+        return JSONResponse(status_code=exc.status_code, content=content)
+
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         logger.exception("Unhandled exception", path=request.url.path, exc_info=exc)
@@ -45,6 +65,7 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
+    app.include_router(auth.router, prefix="/v1")
     app.include_router(spaces.router, prefix="/v1")
     app.include_router(documents.router, prefix="/v1")
     app.include_router(search.router, prefix="/v1")

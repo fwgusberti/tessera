@@ -24,6 +24,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.48b0",
     "structlog>=24.0",
     "itsdangerous>=2.2",
+    "bcrypt>=4.0",
 ]
 
 [tool.hatch.build.targets.wheel]

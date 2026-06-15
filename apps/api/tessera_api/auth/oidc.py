@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
-import secrets
 from typing import Annotated, Any
-from uuid import UUID
 
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
 
 from tessera_api.config import get_settings
 
@@ -50,10 +46,31 @@ def get_current_user_from_session(request: Request) -> dict[str, Any] | None:
 
 
 async def require_user(request: Request) -> dict[str, Any]:
+    # 1. Session cookie (existing OIDC path — backward compat)
     user = get_current_user_from_session(request)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    return user
+    if user:
+        return user
+
+    # 2. JWT Bearer token
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[len("Bearer "):]
+        try:
+            from tessera_api.auth.jwt_auth import verify_access_token
+
+            claims = verify_access_token(token)
+            return {
+                "sub": claims["sub"],
+                "email": claims.get("email", ""),
+                "is_admin": claims.get("is_admin", False),
+            }
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": {"code": "invalid_token", "message": "Invalid or expired token"}},
+            ) from None
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
 
 CurrentUser = Annotated[dict[str, Any], Depends(require_user)]

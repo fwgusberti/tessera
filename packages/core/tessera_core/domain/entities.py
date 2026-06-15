@@ -68,6 +68,7 @@ class User(BaseModel):
     is_admin: bool = False
     groups: list[str] = Field(default_factory=list)
     default_language: str = "pt-BR"
+    password_hash: str | None = None
     created_at: datetime | None = None
 
 
@@ -172,6 +173,15 @@ class AgentCredential(BaseModel):
     @property
     def is_revoked(self) -> bool:
         return self.revoked_at is not None
+
+
+class RefreshToken(BaseModel):
+    id: UUID = Field(default_factory=uuid.uuid4)
+    user_id: UUID
+    token_hash: str
+    issued_at: datetime | None = None
+    expires_at: datetime | None = None
+    is_revoked: bool = False
 
 
 class AuditRecord(BaseModel):

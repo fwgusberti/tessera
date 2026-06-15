@@ -1,0 +1,206 @@
+"""Integration tests for POST /v1/auth/refresh."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def _make_stored_token(raw: str, user_id: uuid.UUID, expired: bool = False) -> MagicMock:
+    from tessera_api.auth.jwt_auth import hash_refresh_token
+
+    token = MagicMock()
+    token.id = uuid.uuid4()
+    token.user_id = user_id
+    token.token_hash = hash_refresh_token(raw)
+    token.is_revoked = False
+    if expired:
+        token.expires_at = datetime(2000, 1, 1, tzinfo=UTC)
+    else:
+        token.expires_at = datetime.now(UTC) + timedelta(days=7)
+    return token
+
+
+def _make_user(user_id: uuid.UUID) -> MagicMock:
+    user = MagicMock()
+    user.id = user_id
+    user.email = "alice@example.com"
+    user.is_admin = False
+    return user
+
+
+class TestRefresh:
+    def _call_refresh(self, refresh_token: str):
+        from fastapi.testclient import TestClient
+        from tessera_api.main import app
+
+        with TestClient(app) as client:
+            return client.post("/v1/auth/refresh", json={"refresh_token": refresh_token})
+
+    def test_valid_refresh_returns_new_tokens(self):
+        """Valid refresh token returns new access_token and new refresh_token."""
+        from tessera_api.auth.jwt_auth import create_refresh_token
+
+        raw = create_refresh_token()
+        user_id = uuid.uuid4()
+        stored = _make_stored_token(raw, user_id)
+        user = _make_user(user_id)
+        new_token = MagicMock()
+        new_token.id = uuid.uuid4()
+
+        with (
+            patch("tessera_api.routers.auth.get_db") as mock_get_db,
+            patch("tessera_api.routers.auth.SqlRefreshTokenRepository") as mock_rt_cls,
+            patch("tessera_api.routers.auth.SqlUserRepository") as mock_user_cls,
+            patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
+        ):
+            mock_session = AsyncMock()
+            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            mock_rt = AsyncMock()
+            mock_rt.get_by_hash = AsyncMock(return_value=stored)
+            mock_rt.revoke = AsyncMock()
+            mock_rt.create = AsyncMock(return_value=new_token)
+            mock_rt_cls.return_value = mock_rt
+
+            mock_user = AsyncMock()
+            mock_user.get_by_id = AsyncMock(return_value=user)
+            mock_user_cls.return_value = mock_user
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.post("/v1/auth/refresh", json={"refresh_token": raw})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "access_token" in body
+        assert "refresh_token" in body
+        assert body["refresh_token"] != raw  # New token issued
+
+    def test_old_token_revoked_after_refresh(self):
+        """After refresh, the old refresh token's revoke method is called."""
+        from tessera_api.auth.jwt_auth import create_refresh_token, hash_refresh_token
+
+        raw = create_refresh_token()
+        user_id = uuid.uuid4()
+        stored = _make_stored_token(raw, user_id)
+        user = _make_user(user_id)
+        new_token = MagicMock()
+        new_token.id = uuid.uuid4()
+
+        with (
+            patch("tessera_api.routers.auth.get_db") as mock_get_db,
+            patch("tessera_api.routers.auth.SqlRefreshTokenRepository") as mock_rt_cls,
+            patch("tessera_api.routers.auth.SqlUserRepository") as mock_user_cls,
+            patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
+        ):
+            mock_session = AsyncMock()
+            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            mock_rt = AsyncMock()
+            mock_rt.get_by_hash = AsyncMock(return_value=stored)
+            mock_rt.revoke = AsyncMock()
+            mock_rt.create = AsyncMock(return_value=new_token)
+            mock_rt_cls.return_value = mock_rt
+
+            mock_user = AsyncMock()
+            mock_user.get_by_id = AsyncMock(return_value=user)
+            mock_user_cls.return_value = mock_user
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                client.post("/v1/auth/refresh", json={"refresh_token": raw})
+
+            expected_hash = hash_refresh_token(raw)
+            mock_rt.revoke.assert_called_once_with(expected_hash)
+
+    def test_revoked_token_returns_401(self):
+        """Already-revoked refresh token returns 401."""
+        from tessera_api.auth.jwt_auth import create_refresh_token
+
+        raw = create_refresh_token()
+        user_id = uuid.uuid4()
+        stored = _make_stored_token(raw, user_id)
+        stored.is_revoked = True
+
+        with (
+            patch("tessera_api.routers.auth.get_db") as mock_get_db,
+            patch("tessera_api.routers.auth.SqlRefreshTokenRepository") as mock_rt_cls,
+        ):
+            mock_session = AsyncMock()
+            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            mock_rt = AsyncMock()
+            mock_rt.get_by_hash = AsyncMock(return_value=stored)
+            mock_rt_cls.return_value = mock_rt
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.post("/v1/auth/refresh", json={"refresh_token": raw})
+
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "invalid_refresh_token"
+
+    def test_unknown_token_returns_401(self):
+        """Token not found in database returns 401."""
+        from tessera_api.auth.jwt_auth import create_refresh_token
+
+        raw = create_refresh_token()
+
+        with (
+            patch("tessera_api.routers.auth.get_db") as mock_get_db,
+            patch("tessera_api.routers.auth.SqlRefreshTokenRepository") as mock_rt_cls,
+        ):
+            mock_session = AsyncMock()
+            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            mock_rt = AsyncMock()
+            mock_rt.get_by_hash = AsyncMock(return_value=None)
+            mock_rt_cls.return_value = mock_rt
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.post("/v1/auth/refresh", json={"refresh_token": raw})
+
+        assert response.status_code == 401
+
+    def test_expired_token_returns_401(self):
+        """Expired refresh token returns 401."""
+        from tessera_api.auth.jwt_auth import create_refresh_token
+
+        raw = create_refresh_token()
+        user_id = uuid.uuid4()
+        stored = _make_stored_token(raw, user_id, expired=True)
+
+        with (
+            patch("tessera_api.routers.auth.get_db") as mock_get_db,
+            patch("tessera_api.routers.auth.SqlRefreshTokenRepository") as mock_rt_cls,
+        ):
+            mock_session = AsyncMock()
+            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            mock_rt = AsyncMock()
+            mock_rt.get_by_hash = AsyncMock(return_value=stored)
+            mock_rt_cls.return_value = mock_rt
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.post("/v1/auth/refresh", json={"refresh_token": raw})
+
+        assert response.status_code == 401

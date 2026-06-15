@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     embedding_model: str = "nomic-embed-text"
     embedding_dimensions: int = 768
 
+    jwt_access_token_expire_minutes: int = 15
+    jwt_refresh_token_expire_days: int = 7
+    jwt_algorithm: str = "HS256"
+
     log_level: str = "INFO"
     environment: str = "development"
 
