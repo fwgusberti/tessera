@@ -119,4 +119,18 @@ describe("LoginPage", () => {
     render(<LoginPage />);
     await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/"));
   });
+
+  it("renders a 'Create account' link pointing to /register", () => {
+    render(<LoginPage />);
+    expect(screen.getByRole("link", { name: /create account/i })).toHaveAttribute("href", "/register");
+  });
+
+  it("includes redirect param in 'Create account' link when ?redirect is present", () => {
+    mockSearchParams = new URLSearchParams("redirect=/documents");
+    render(<LoginPage />);
+    expect(screen.getByRole("link", { name: /create account/i })).toHaveAttribute(
+      "href",
+      "/register?redirect=%2Fdocuments"
+    );
+  });
 });

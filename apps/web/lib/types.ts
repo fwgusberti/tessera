@@ -84,3 +84,11 @@ export interface LoginResponse {
 }
 
 export type RefreshResponse = LoginResponse;
+
+export interface RegisterCredentials {
+  displayName: string;
+  email: string;
+  password: string;
+}
+
+export type PasswordStrength = "weak" | "medium" | "strong";

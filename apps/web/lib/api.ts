@@ -100,3 +100,7 @@ export async function authLogout(accessToken: string, refreshToken: string): Pro
     Authorization: `Bearer ${accessToken}`,
   });
 }
+
+export async function authRegister(displayName: string, email: string, password: string): Promise<void> {
+  await rawPost<unknown>("/v1/auth/register", { display_name: displayName, email, password });
+}
