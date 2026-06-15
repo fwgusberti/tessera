@@ -60,3 +60,27 @@ export interface AgentCredential {
   revoked_at: string | null;
   created_at: string;
 }
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  isAdmin: boolean;
+}
+
+export type AuthStatus = "loading" | "authenticated" | "unauthenticated";
+
+export interface LoginCredentials {
+  email: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  refresh_token: string;
+  token_type: "bearer";
+  expires_in: number;
+}
+
+export type RefreshResponse = LoginResponse;

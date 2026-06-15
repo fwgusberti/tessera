@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { AuthGuard } from "@/lib/auth-guard";
 
 interface Metrics {
   correct_answer_rate: number | null;
@@ -32,29 +33,34 @@ export default function MetricsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <p className="text-gray-500">Loading metrics...</p>;
-  if (!metrics) return <p className="text-red-500">Failed to load metrics.</p>;
-
   const fmt = (v: number | null, suffix = "") =>
     v === null ? "N/A" : `${(v * 100).toFixed(1)}${suffix}`;
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Product Metrics</h1>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <MetricCard label="Correct Answer Rate" value={fmt(metrics.correct_answer_rate, "%")} />
-        <MetricCard label="Don't Know Rate" value={fmt(metrics.dont_know_rate, "%")} />
-        <MetricCard label="Documents with Drift" value={String(metrics.documents_with_drift)} />
-        <MetricCard label="Total Queries" value={String(metrics.total_queries)} />
-        <MetricCard
-          label="Approval Time p50"
-          value={metrics.time_to_approval_p50 !== null ? `${metrics.time_to_approval_p50}h` : "N/A"}
-        />
-        <MetricCard
-          label="Approval Time p90"
-          value={metrics.time_to_approval_p90 !== null ? `${metrics.time_to_approval_p90}h` : "N/A"}
-        />
-      </div>
-    </div>
+    <AuthGuard>
+      {loading ? (
+        <p className="text-gray-500">Loading metrics...</p>
+      ) : !metrics ? (
+        <p className="text-red-500">Failed to load metrics.</p>
+      ) : (
+        <div className="space-y-6">
+          <h1 className="text-2xl font-bold">Product Metrics</h1>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <MetricCard label="Correct Answer Rate" value={fmt(metrics.correct_answer_rate, "%")} />
+            <MetricCard label="Don't Know Rate" value={fmt(metrics.dont_know_rate, "%")} />
+            <MetricCard label="Documents with Drift" value={String(metrics.documents_with_drift)} />
+            <MetricCard label="Total Queries" value={String(metrics.total_queries)} />
+            <MetricCard
+              label="Approval Time p50"
+              value={metrics.time_to_approval_p50 !== null ? `${metrics.time_to_approval_p50}h` : "N/A"}
+            />
+            <MetricCard
+              label="Approval Time p90"
+              value={metrics.time_to_approval_p90 !== null ? `${metrics.time_to_approval_p90}h` : "N/A"}
+            />
+          </div>
+        </div>
+      )}
+    </AuthGuard>
   );
 }

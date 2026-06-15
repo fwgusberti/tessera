@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { Metrics, Space } from "@/lib/types";
+import { AuthGuard } from "@/lib/auth-guard";
 
 interface StatCardProps {
   label: string;
@@ -63,37 +64,39 @@ export default function Home() {
   const dash = "–";
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Tessera</h1>
-        <p className="text-gray-500 mt-1">Living Documentation Platform</p>
-      </div>
+    <AuthGuard>
+      <div className="space-y-8">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Tessera</h1>
+          <p className="text-gray-500 mt-1">Living Documentation Platform</p>
+        </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {loading ? (
-          <>
-            <StatCard label="Spaces" value="…" />
-            <StatCard label="Total Queries" value="…" />
-            <StatCard label="Documents with Drift" value="…" />
-          </>
-        ) : (
-          <>
-            <StatCard label="Spaces" value={spaceCount ?? dash} />
-            <StatCard label="Total Queries" value={metrics?.total_queries ?? dash} />
-            <StatCard label="Documents with Drift" value={metrics?.documents_with_drift ?? dash} />
-          </>
-        )}
-      </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {loading ? (
+            <>
+              <StatCard label="Spaces" value="…" />
+              <StatCard label="Total Queries" value="…" />
+              <StatCard label="Documents with Drift" value="…" />
+            </>
+          ) : (
+            <>
+              <StatCard label="Spaces" value={spaceCount ?? dash} />
+              <StatCard label="Total Queries" value={metrics?.total_queries ?? dash} />
+              <StatCard label="Documents with Drift" value={metrics?.documents_with_drift ?? dash} />
+            </>
+          )}
+        </div>
 
-      <div>
-        <h2 className="text-lg font-semibold text-gray-800 mb-3">Quick Navigation</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <NavCard href="/search" title="Search" description="Semantic search and AI assistant across your documentation" />
-          <NavCard href="/proposals" title="Proposals" description="Review and approve pending document update proposals" />
-          <NavCard href="/metrics" title="Metrics" description="Platform usage statistics and document health indicators" />
-          <NavCard href="/admin" title="Admin" description="Manage spaces, permissions, connectors, and credentials" />
+        <div>
+          <h2 className="text-lg font-semibold text-gray-800 mb-3">Quick Navigation</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <NavCard href="/search" title="Search" description="Semantic search and AI assistant across your documentation" />
+            <NavCard href="/proposals" title="Proposals" description="Review and approve pending document update proposals" />
+            <NavCard href="/metrics" title="Metrics" description="Platform usage statistics and document health indicators" />
+            <NavCard href="/admin" title="Admin" description="Manage spaces, permissions, connectors, and credentials" />
+          </div>
         </div>
       </div>
-    </div>
+    </AuthGuard>
   );
 }

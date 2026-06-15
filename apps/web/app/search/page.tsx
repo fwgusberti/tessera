@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
+import { AuthGuard } from "@/lib/auth-guard";
 
 interface Citation {
   chunk_id: string;
@@ -55,6 +56,7 @@ export default function SearchPage() {
   };
 
   return (
+    <AuthGuard>
     <div className="max-w-3xl mx-auto space-y-6">
       <div className="flex gap-2 mb-4">
         <button
@@ -144,5 +146,6 @@ export default function SearchPage() {
         </div>
       )}
     </div>
+    </AuthGuard>
   );
 }

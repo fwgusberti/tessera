@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { Space, Metrics } from "@/lib/types";
 import { SpaceSelector } from "@/components/SpaceSelector";
+import { AuthGuard } from "@/lib/auth-guard";
 
 export default function AdminPage() {
   const [spaces, setSpaces] = useState<Space[]>([]);
@@ -112,10 +113,9 @@ export default function AdminPage() {
     }
   };
 
-  if (loading) return <p className="text-gray-500">Loading admin panel…</p>;
-
   return (
-    <div className="space-y-10">
+    <AuthGuard>
+    {loading ? <p className="text-gray-500">Loading admin panel…</p> : <div className="space-y-10">
       <h1 className="text-2xl font-bold">Admin Panel</h1>
 
       {/* Metrics summary */}
@@ -261,7 +261,8 @@ export default function AdminPage() {
 
       <ConnectorsSection spaces={spaces} />
       <AgentCredentialsSection spaces={spaces} />
-    </div>
+    </div>}
+    </AuthGuard>
   );
 }
 

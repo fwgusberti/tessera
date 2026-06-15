@@ -1,18 +1,63 @@
+import type { LoginResponse, RefreshResponse } from "./types";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+interface ApiConfig {
+  getAccessToken(): string | null;
+  refreshIfNeeded(): Promise<string>;
+  forceRefresh(): Promise<string>;
+  onUnauthorized(): void;
+}
+
+let authConfig: ApiConfig | null = null;
+
+export function configureApi(config: ApiConfig): void {
+  authConfig = config;
+}
+
+async function request<T>(path: string, options?: RequestInit, isRetry = false): Promise<T> {
+  let token: string | null = authConfig?.getAccessToken() ?? null;
+
+  if (authConfig && !isRetry) {
+    try {
+      token = await authConfig.refreshIfNeeded();
+    } catch {
+      // Proceed with whatever token we have; let the server decide
+    }
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options?.headers as Record<string, string>),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
+    headers,
   });
+
   if (!res.ok) {
+    if (res.status === 401 && authConfig) {
+      if (!isRetry) {
+        try {
+          await authConfig.forceRefresh();
+          return request<T>(path, options, true);
+        } catch {
+          authConfig.onUnauthorized();
+          throw new Error("Session expired. Please log in again.");
+        }
+      }
+      // Retry also got 401 — token is definitively invalid
+      authConfig.onUnauthorized();
+      throw new Error("Session expired. Please log in again.");
+    }
     const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
     throw new Error(err?.error?.message ?? res.statusText);
   }
+
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
@@ -20,4 +65,38 @@ export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "POST", body: JSON.stringify(body) }),
+  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
+
+// ─── Raw auth functions (bypass auth injection) ──────────────────────────────
+
+async function rawPost<T>(path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: {
+      "Content-Type": "application/json",
+      ...extraHeaders,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
+    throw new Error(err?.error?.message ?? res.statusText);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
+export async function authLogin(email: string, password: string): Promise<LoginResponse> {
+  return rawPost<LoginResponse>("/v1/auth/login", { email, password });
+}
+
+export async function authRefresh(refreshToken: string): Promise<RefreshResponse> {
+  return rawPost<RefreshResponse>("/v1/auth/refresh", { refresh_token: refreshToken });
+}
+
+export async function authLogout(accessToken: string, refreshToken: string): Promise<void> {
+  return rawPost<void>("/v1/auth/logout", { refresh_token: refreshToken }, {
+    Authorization: `Bearer ${accessToken}`,
+  });
+}

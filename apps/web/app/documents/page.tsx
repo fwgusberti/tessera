@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { Document, Space } from "@/lib/types";
 import { SpaceSelector } from "@/components/SpaceSelector";
+import { AuthGuard } from "@/lib/auth-guard";
 
 const STATE_STYLES: Record<string, string> = {
   ingested: "bg-yellow-100 text-yellow-800",
@@ -38,6 +39,7 @@ export default function DocumentsPage() {
   }, [selectedSpaceId]);
 
   return (
+    <AuthGuard>
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-900">Documents</h1>
 
@@ -101,5 +103,6 @@ export default function DocumentsPage() {
         </div>
       )}
     </div>
+    </AuthGuard>
   );
 }

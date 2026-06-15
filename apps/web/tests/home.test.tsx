@@ -1,11 +1,21 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import React from "react";
 import Home from "@/app/page";
 
 vi.mock("@/lib/api", () => ({
   api: {
     get: vi.fn(),
   },
+}));
+
+vi.mock("@/lib/auth", () => ({
+  useAuth: () => ({ status: "authenticated", user: { id: "u1", email: "t@t.com", isAdmin: false }, accessToken: "tok" }),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+vi.mock("@/lib/auth-guard", () => ({
+  AuthGuard: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
 import { api } from "@/lib/api";
