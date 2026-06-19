@@ -12,9 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tessera_api.adapters.models import (
     AgentCredentialModel,
     AuditRecordModel,
+    CompanyMembershipModel,
+    CompanyModel,
     ConnectorModel,
     DocumentModel,
     DocumentVersionModel,
+    DomainJoinPolicyModel,
+    InvitationModel,
+    JoinRequestModel,
+    OnboardingProgressModel,
     RefreshTokenModel,
     RolePermissionModel,
     SourceArtifactModel,
@@ -26,11 +32,21 @@ from tessera_core.domain.entities import (
     AgentCredential,
     AuditRecord,
     Chunk,
+    Company,
+    CompanyMembership,
+    CompanyRole,
     Confidentiality,
     Connector,
     Document,
     DocumentLifecycleState,
     DocumentVersion,
+    DomainJoinPolicy,
+    DomainPolicy,
+    Invitation,
+    InvitationStatus,
+    JoinRequest,
+    JoinRequestStatus,
+    OnboardingProgress,
     RefreshToken,
     RolePermission,
     SourceArtifact,
@@ -43,9 +59,14 @@ from tessera_core.ports.repositories import (
     AgentCredentialRepository,
     AuditRepository,
     ChunkRepository,
+    CompanyRepository,
     ConnectorRepository,
     DocumentRepository,
     DocumentVersionRepository,
+    DomainPolicyRepository,
+    InvitationRepository,
+    JoinRequestRepository,
+    OnboardingRepository,
     ProposalRepository,
     SourceArtifactRepository,
     SpaceRepository,
@@ -765,3 +786,433 @@ class SqlRefreshTokenRepository:
         model = result.scalar_one_or_none()
         if model:
             await self._session.delete(model)
+
+
+# ---------------------------------------------------------------------------
+# Onboarding
+# ---------------------------------------------------------------------------
+
+def _onboarding_from_model(m: OnboardingProgressModel) -> OnboardingProgress:
+    return OnboardingProgress(
+        id=m.id,
+        user_id=m.user_id,
+        completed_steps=list(m.completed_steps or []),
+        current_step=m.current_step,
+        company_join_method=m.company_join_method,
+        completed_at=m.completed_at,
+        created_at=m.created_at,
+        updated_at=m.updated_at,
+    )
+
+
+class SqlOnboardingRepository(OnboardingRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create(self, progress: OnboardingProgress) -> OnboardingProgress:
+        model = OnboardingProgressModel(
+            id=progress.id,
+            user_id=progress.user_id,
+            completed_steps=list(progress.completed_steps),
+            current_step=progress.current_step,
+            company_join_method=progress.company_join_method,
+            completed_at=progress.completed_at,
+        )
+        self._session.add(model)
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _onboarding_from_model(model)
+
+    async def get_by_user_id(self, user_id: UUID) -> OnboardingProgress | None:
+        result = await self._session.execute(
+            select(OnboardingProgressModel).where(OnboardingProgressModel.user_id == user_id)
+        )
+        model = result.scalar_one_or_none()
+        return _onboarding_from_model(model) if model else None
+
+    async def advance_step(
+        self, user_id: UUID, next_step: str, company_join_method: str | None = None
+    ) -> OnboardingProgress:
+        from datetime import datetime
+
+        result = await self._session.execute(
+            select(OnboardingProgressModel).where(OnboardingProgressModel.user_id == user_id)
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise ValueError(f"OnboardingProgress for user {user_id} not found")
+
+        # Mark the current step as completed before moving forward
+        current = model.current_step
+        if current and current not in list(model.completed_steps or []):
+            model.completed_steps = list(model.completed_steps or []) + [current]
+
+        model.current_step = next_step
+        model.updated_at = datetime.now(UTC)
+        if company_join_method is not None:
+            model.company_join_method = company_join_method
+
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _onboarding_from_model(model)
+
+    async def complete(self, user_id: UUID) -> OnboardingProgress:
+        from datetime import datetime
+
+        result = await self._session.execute(
+            select(OnboardingProgressModel).where(OnboardingProgressModel.user_id == user_id)
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise ValueError(f"OnboardingProgress for user {user_id} not found")
+
+        now = datetime.now(UTC)
+        model.completed_at = now
+        model.updated_at = now
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _onboarding_from_model(model)
+
+
+# ---------------------------------------------------------------------------
+# Company
+# ---------------------------------------------------------------------------
+
+def _company_from_model(m: CompanyModel) -> Company:
+    return Company(
+        id=m.id,
+        name=m.name,
+        industry=m.industry,
+        team_size=m.team_size,
+        admin_user_id=m.admin_user_id,
+        created_at=m.created_at,
+        updated_at=m.updated_at,
+    )
+
+
+def _membership_from_model(m: CompanyMembershipModel) -> CompanyMembership:
+    return CompanyMembership(
+        id=m.id,
+        user_id=m.user_id,
+        company_id=m.company_id,
+        role=CompanyRole(m.role),
+        joined_at=m.joined_at,
+    )
+
+
+class SqlCompanyRepository(CompanyRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create(self, company: Company) -> Company:
+        model = CompanyModel(
+            id=company.id,
+            name=company.name,
+            industry=company.industry,
+            team_size=company.team_size,
+            admin_user_id=company.admin_user_id,
+        )
+        self._session.add(model)
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _company_from_model(model)
+
+    async def get_by_id(self, company_id: UUID) -> Company | None:
+        result = await self._session.execute(
+            select(CompanyModel).where(CompanyModel.id == company_id)
+        )
+        model = result.scalar_one_or_none()
+        return _company_from_model(model) if model else None
+
+    async def add_membership(self, membership: CompanyMembership) -> CompanyMembership:
+        model = CompanyMembershipModel(
+            id=membership.id,
+            user_id=membership.user_id,
+            company_id=membership.company_id,
+            role=membership.role.value,
+        )
+        self._session.add(model)
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _membership_from_model(model)
+
+    async def get_membership(self, user_id: UUID, company_id: UUID) -> CompanyMembership | None:
+        result = await self._session.execute(
+            select(CompanyMembershipModel).where(
+                CompanyMembershipModel.user_id == user_id,
+                CompanyMembershipModel.company_id == company_id,
+            )
+        )
+        model = result.scalar_one_or_none()
+        return _membership_from_model(model) if model else None
+
+    async def list_memberships_for_user(self, user_id: UUID) -> list[CompanyMembership]:
+        result = await self._session.execute(
+            select(CompanyMembershipModel).where(CompanyMembershipModel.user_id == user_id)
+        )
+        return [_membership_from_model(m) for m in result.scalars().all()]
+
+
+# ---------------------------------------------------------------------------
+# Domain Policy
+# ---------------------------------------------------------------------------
+
+def _domain_policy_from_model(m: DomainJoinPolicyModel) -> DomainJoinPolicy:
+    return DomainJoinPolicy(
+        id=m.id,
+        company_id=m.company_id,
+        domain=m.domain,
+        policy=DomainPolicy(m.policy),
+        verified=m.verified,
+        created_at=m.created_at,
+        verified_at=m.verified_at,
+    )
+
+
+class SqlDomainPolicyRepository(DomainPolicyRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create(self, policy: DomainJoinPolicy) -> DomainJoinPolicy:
+        model = DomainJoinPolicyModel(
+            id=policy.id,
+            company_id=policy.company_id,
+            domain=policy.domain,
+            policy=policy.policy.value,
+            verified=policy.verified,
+        )
+        self._session.add(model)
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _domain_policy_from_model(model)
+
+    async def get_by_domain(self, domain: str) -> DomainJoinPolicy | None:
+        result = await self._session.execute(
+            select(DomainJoinPolicyModel).where(DomainJoinPolicyModel.domain == domain)
+        )
+        model = result.scalar_one_or_none()
+        return _domain_policy_from_model(model) if model else None
+
+    async def get_by_id(self, policy_id: UUID) -> DomainJoinPolicy | None:
+        result = await self._session.execute(
+            select(DomainJoinPolicyModel).where(DomainJoinPolicyModel.id == policy_id)
+        )
+        model = result.scalar_one_or_none()
+        return _domain_policy_from_model(model) if model else None
+
+    async def list_by_company(self, company_id: UUID) -> list[DomainJoinPolicy]:
+        result = await self._session.execute(
+            select(DomainJoinPolicyModel).where(DomainJoinPolicyModel.company_id == company_id)
+        )
+        return [_domain_policy_from_model(m) for m in result.scalars().all()]
+
+    async def mark_verified(self, policy_id: UUID) -> DomainJoinPolicy:
+        from datetime import datetime
+
+        result = await self._session.execute(
+            select(DomainJoinPolicyModel).where(DomainJoinPolicyModel.id == policy_id)
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise ValueError(f"DomainJoinPolicy {policy_id} not found")
+        model.verified = True
+        model.verified_at = datetime.now(UTC)
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _domain_policy_from_model(model)
+
+
+# ---------------------------------------------------------------------------
+# Invitation
+# ---------------------------------------------------------------------------
+
+def _invitation_from_model(m: InvitationModel) -> Invitation:
+    return Invitation(
+        id=m.id,
+        company_id=m.company_id,
+        invited_by_user_id=m.invited_by_user_id,
+        email=m.email,
+        token_hash=m.token_hash,
+        status=InvitationStatus(m.status),
+        expires_at=m.expires_at,
+        created_at=m.created_at,
+        accepted_at=m.accepted_at,
+    )
+
+
+class SqlInvitationRepository(InvitationRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create(self, invitation: Invitation) -> Invitation:
+        model = InvitationModel(
+            id=invitation.id,
+            company_id=invitation.company_id,
+            invited_by_user_id=invitation.invited_by_user_id,
+            email=invitation.email,
+            token_hash=invitation.token_hash,
+            status=invitation.status.value,
+            expires_at=invitation.expires_at,
+            accepted_at=invitation.accepted_at,
+        )
+        self._session.add(model)
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _invitation_from_model(model)
+
+    async def create_bulk(self, invitations: list[Invitation]) -> list[Invitation]:
+        models = [
+            InvitationModel(
+                id=inv.id,
+                company_id=inv.company_id,
+                invited_by_user_id=inv.invited_by_user_id,
+                email=inv.email,
+                token_hash=inv.token_hash,
+                status=inv.status.value,
+                expires_at=inv.expires_at,
+                accepted_at=inv.accepted_at,
+            )
+            for inv in invitations
+        ]
+        for m in models:
+            self._session.add(m)
+        await self._session.flush()
+        for m in models:
+            await self._session.refresh(m)
+        return [_invitation_from_model(m) for m in models]
+
+    async def get_by_id(self, invitation_id: UUID) -> Invitation | None:
+        result = await self._session.execute(
+            select(InvitationModel).where(InvitationModel.id == invitation_id)
+        )
+        model = result.scalar_one_or_none()
+        return _invitation_from_model(model) if model else None
+
+    async def get_by_token_hash(self, token_hash: str) -> Invitation | None:
+        result = await self._session.execute(
+            select(InvitationModel).where(InvitationModel.token_hash == token_hash)
+        )
+        model = result.scalar_one_or_none()
+        return _invitation_from_model(model) if model else None
+
+    async def get_pending_for_email(self, email: str) -> list[Invitation]:
+        result = await self._session.execute(
+            select(InvitationModel).where(
+                InvitationModel.email == email,
+                InvitationModel.status == "pending",
+            )
+        )
+        return [_invitation_from_model(m) for m in result.scalars().all()]
+
+    async def update_status(self, invitation_id: UUID, status: InvitationStatus) -> Invitation:
+        from datetime import datetime
+
+        result = await self._session.execute(
+            select(InvitationModel).where(InvitationModel.id == invitation_id)
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise ValueError(f"Invitation {invitation_id} not found")
+        model.status = status.value
+        if status == InvitationStatus.ACCEPTED:
+            model.accepted_at = datetime.now(UTC)
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _invitation_from_model(model)
+
+    async def cancel(self, invitation_id: UUID) -> None:
+        result = await self._session.execute(
+            select(InvitationModel).where(InvitationModel.id == invitation_id)
+        )
+        model = result.scalar_one_or_none()
+        if model:
+            model.status = InvitationStatus.CANCELLED.value
+            await self._session.flush()
+
+
+# ---------------------------------------------------------------------------
+# JoinRequest
+# ---------------------------------------------------------------------------
+
+def _join_request_from_model(m: JoinRequestModel) -> JoinRequest:
+    return JoinRequest(
+        id=m.id,
+        user_id=m.user_id,
+        company_id=m.company_id,
+        status=JoinRequestStatus(m.status),
+        requested_at=m.requested_at,
+        decided_at=m.decided_at,
+        decided_by_user_id=m.decided_by_user_id,
+    )
+
+
+class SqlJoinRequestRepository(JoinRequestRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create(self, request: JoinRequest) -> JoinRequest:
+        model = JoinRequestModel(
+            id=request.id,
+            user_id=request.user_id,
+            company_id=request.company_id,
+            status=request.status.value,
+        )
+        self._session.add(model)
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _join_request_from_model(model)
+
+    async def get_by_user_and_company(
+        self, user_id: UUID, company_id: UUID
+    ) -> JoinRequest | None:
+        result = await self._session.execute(
+            select(JoinRequestModel).where(
+                JoinRequestModel.user_id == user_id,
+                JoinRequestModel.company_id == company_id,
+            )
+        )
+        model = result.scalar_one_or_none()
+        return _join_request_from_model(model) if model else None
+
+    async def get_by_id(self, request_id: UUID) -> JoinRequest | None:
+        result = await self._session.execute(
+            select(JoinRequestModel).where(JoinRequestModel.id == request_id)
+        )
+        model = result.scalar_one_or_none()
+        return _join_request_from_model(model) if model else None
+
+    async def list_pending_for_company(self, company_id: UUID) -> list[JoinRequest]:
+        result = await self._session.execute(
+            select(JoinRequestModel).where(
+                JoinRequestModel.company_id == company_id,
+                JoinRequestModel.status == "pending",
+            )
+        )
+        return [_join_request_from_model(m) for m in result.scalars().all()]
+
+    async def decide(
+        self, request_id: UUID, status: JoinRequestStatus, decided_by: UUID
+    ) -> JoinRequest:
+        from datetime import datetime
+
+        result = await self._session.execute(
+            select(JoinRequestModel).where(JoinRequestModel.id == request_id)
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise ValueError(f"JoinRequest {request_id} not found")
+        model.status = status.value
+        model.decided_at = datetime.now(UTC)
+        model.decided_by_user_id = decided_by
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _join_request_from_model(model)
+
+    async def cancel(self, request_id: UUID) -> None:
+        result = await self._session.execute(
+            select(JoinRequestModel).where(JoinRequestModel.id == request_id)
+        )
+        model = result.scalar_one_or_none()
+        if model:
+            model.status = JoinRequestStatus.DENIED.value
+            await self._session.flush()

@@ -69,6 +69,8 @@ class User(BaseModel):
     groups: list[str] = Field(default_factory=list)
     default_language: str = "pt-BR"
     password_hash: str | None = None
+    title: str | None = None
+    onboarding_completed: bool = False
     created_at: datetime | None = None
 
 
@@ -193,3 +195,91 @@ class AuditRecord(BaseModel):
     entity_id: UUID
     occurred_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Onboarding domain entities
+# ---------------------------------------------------------------------------
+
+class CompanyRole(str, Enum):
+    ADMIN = "admin"
+    MEMBER = "member"
+
+
+class DomainPolicy(str, Enum):
+    AUTO_JOIN = "auto_join"
+    REQUEST_APPROVAL = "request_approval"
+
+
+class InvitationStatus(str, Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+
+
+class JoinRequestStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+
+
+class Company(BaseModel):
+    id: UUID = Field(default_factory=uuid.uuid4)
+    name: str
+    industry: str | None = None
+    team_size: str | None = None
+    admin_user_id: UUID
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class CompanyMembership(BaseModel):
+    id: UUID = Field(default_factory=uuid.uuid4)
+    user_id: UUID
+    company_id: UUID
+    role: CompanyRole
+    joined_at: datetime | None = None
+
+
+class DomainJoinPolicy(BaseModel):
+    id: UUID = Field(default_factory=uuid.uuid4)
+    company_id: UUID
+    domain: str
+    policy: DomainPolicy
+    verified: bool = False
+    created_at: datetime | None = None
+    verified_at: datetime | None = None
+
+
+class Invitation(BaseModel):
+    id: UUID = Field(default_factory=uuid.uuid4)
+    company_id: UUID
+    invited_by_user_id: UUID | None = None
+    email: str
+    token_hash: str
+    status: InvitationStatus = InvitationStatus.PENDING
+    expires_at: datetime
+    created_at: datetime | None = None
+    accepted_at: datetime | None = None
+
+
+class JoinRequest(BaseModel):
+    id: UUID = Field(default_factory=uuid.uuid4)
+    user_id: UUID
+    company_id: UUID
+    status: JoinRequestStatus = JoinRequestStatus.PENDING
+    requested_at: datetime | None = None
+    decided_at: datetime | None = None
+    decided_by_user_id: UUID | None = None
+
+
+class OnboardingProgress(BaseModel):
+    id: UUID = Field(default_factory=uuid.uuid4)
+    user_id: UUID
+    completed_steps: list[str] = Field(default_factory=list)
+    current_step: str = "profile"
+    company_join_method: str | None = None
+    completed_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None

@@ -25,6 +25,7 @@ dependencies = [
     "structlog>=24.0",
     "itsdangerous>=2.2",
     "bcrypt>=4.0",
+    "fastapi-mail>=1.4",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -51,3 +52,12 @@ known-first-party = ["tessera_api", "tessera_core"]
 [tool.black]
 line-length = 100
 target-version = ["py312"]
+
+[dependency-groups]
+dev = [
+    "anyio>=4.13.0",
+    "httpx>=0.28.1",
+    "pytest>=9.1.0",
+    "pytest-anyio>=0.0.0",
+    "pytest-cov>=7.1.0",
+]

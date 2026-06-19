@@ -174,3 +174,131 @@ describe("Document detail page", () => {
     expect(screen.getByText(/published/i)).toBeInTheDocument();
   });
 });
+
+// ─── Add Document modal ───────────────────────────────────────────────────────
+
+const newMockDoc = {
+  id: "d3", space_id: "s1", title: "New Doc", language: "pt-BR", confidentiality: "internal",
+  tags: [], state: "ingested", current_version_id: null, owner_user_id: null,
+  created_at: "2026-06-18T00:00:00Z", updated_at: "2026-06-18T00:00:00Z",
+};
+
+describe("Add Document modal", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    mockApi.get.mockImplementation((path: string) => {
+      if (path === "/v1/spaces") return Promise.resolve({ spaces: mockSpaces });
+      if (path.includes("/v1/documents")) return Promise.resolve({ documents: mockDocuments });
+      return Promise.resolve({});
+    });
+  });
+
+  it("shows Add Document button on the Documents page", async () => {
+    const { default: DocumentsPage } = await import("@/app/documents/page");
+    render(<DocumentsPage />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Engineering" })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /add document/i })).toBeInTheDocument();
+  });
+
+  it("opens modal dialog when Add Document button is clicked", async () => {
+    const { default: DocumentsPage } = await import("@/app/documents/page");
+    render(<DocumentsPage />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Engineering" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /add document/i }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("calls POST /v1/documents and prepends new document on successful submit", async () => {
+    const { default: DocumentsPage } = await import("@/app/documents/page");
+    mockApi.get.mockImplementation((path: string) => {
+      if (path === "/v1/spaces") return Promise.resolve({ spaces: mockSpaces });
+      if (path.includes("/v1/documents")) return Promise.resolve({ documents: [] });
+      return Promise.resolve({});
+    });
+    mockApi.post.mockResolvedValue({ document: newMockDoc, version: mockVersion });
+
+    render(<DocumentsPage />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Engineering" })).toBeInTheDocument());
+
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "s1" } });
+    await waitFor(() => expect(screen.getByText(/no documents/i)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /add document/i }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: "New Doc" } });
+    fireEvent.change(screen.getByLabelText(/space/i), { target: { value: "s1" } });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText("New Doc")).toBeInTheDocument();
+  });
+
+  it("shows inline error for empty title without submitting", async () => {
+    const { default: DocumentsPage } = await import("@/app/documents/page");
+    render(<DocumentsPage />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Engineering" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /add document/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(screen.getByText(/title is required/i)).toBeInTheDocument();
+    expect(mockApi.post).not.toHaveBeenCalled();
+  });
+
+  it("shows inline error when no space selected without submitting", async () => {
+    const { default: DocumentsPage } = await import("@/app/documents/page");
+    render(<DocumentsPage />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Engineering" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /add document/i }));
+
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: "Test" } });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(screen.getByText(/space is required/i)).toBeInTheDocument();
+    expect(mockApi.post).not.toHaveBeenCalled();
+  });
+
+  it("shows API error banner and keeps modal open on submission failure", async () => {
+    const { default: DocumentsPage } = await import("@/app/documents/page");
+    mockApi.post.mockRejectedValue(new Error("Server error"));
+
+    render(<DocumentsPage />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Engineering" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /add document/i }));
+
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: "Test" } });
+    fireEvent.change(screen.getByLabelText(/space/i), { target: { value: "s1" } });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.getByText(/server error/i)).toBeInTheDocument());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("closes modal without saving when Cancel is clicked", async () => {
+    const { default: DocumentsPage } = await import("@/app/documents/page");
+    render(<DocumentsPage />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Engineering" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /add document/i }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockApi.post).not.toHaveBeenCalled();
+  });
+
+  it("resets form fields when modal is reopened after cancel", async () => {
+    const { default: DocumentsPage } = await import("@/app/documents/page");
+    render(<DocumentsPage />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Engineering" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /add document/i }));
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: "Draft" } });
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /add document/i }));
+    expect((screen.getByLabelText(/title/i) as HTMLInputElement).value).toBe("");
+  });
+});

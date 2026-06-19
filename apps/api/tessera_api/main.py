@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+from tessera_api.auth.bearer import require_onboarding_complete
 from tessera_api.config import get_settings
 from tessera_api.routers import (
     admin,
     agent_credentials,
     assistant,
     auth,
+    companies,
     connectors,
     documents,
+    invitations,
     metrics,
+    onboarding,
     proposals,
     search,
     spaces,
@@ -65,16 +69,21 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
+    _onboarding_guard = [Depends(require_onboarding_complete)]
+
     app.include_router(auth.router, prefix="/v1")
-    app.include_router(spaces.router, prefix="/v1")
-    app.include_router(documents.router, prefix="/v1")
-    app.include_router(search.router, prefix="/v1")
-    app.include_router(assistant.router, prefix="/v1")
-    app.include_router(proposals.router, prefix="/v1")
-    app.include_router(connectors.router, prefix="/v1")
-    app.include_router(agent_credentials.router, prefix="/v1")
-    app.include_router(admin.router, prefix="/v1")
-    app.include_router(metrics.router, prefix="/v1")
+    app.include_router(onboarding.router, prefix="/v1")
+    app.include_router(companies.router, prefix="/v1", dependencies=_onboarding_guard)
+    app.include_router(invitations.router, prefix="/v1", dependencies=_onboarding_guard)
+    app.include_router(spaces.router, prefix="/v1", dependencies=_onboarding_guard)
+    app.include_router(documents.router, prefix="/v1", dependencies=_onboarding_guard)
+    app.include_router(search.router, prefix="/v1", dependencies=_onboarding_guard)
+    app.include_router(assistant.router, prefix="/v1", dependencies=_onboarding_guard)
+    app.include_router(proposals.router, prefix="/v1", dependencies=_onboarding_guard)
+    app.include_router(connectors.router, prefix="/v1", dependencies=_onboarding_guard)
+    app.include_router(agent_credentials.router, prefix="/v1", dependencies=_onboarding_guard)
+    app.include_router(admin.router, prefix="/v1", dependencies=_onboarding_guard)
+    app.include_router(metrics.router, prefix="/v1", dependencies=_onboarding_guard)
 
     return app
 

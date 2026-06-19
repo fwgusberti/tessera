@@ -30,6 +30,17 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     environment: str = "development"
 
+    frontend_url: str = "http://localhost:3000"
+
+    mail_username: str = ""
+    mail_password: str = ""
+    mail_from: str = "noreply@tessera.app"
+    mail_server: str = "localhost"
+    mail_port: int = 587
+    mail_suppress_send: bool = True
+    mail_starttls: bool = True
+    mail_ssl_tls: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

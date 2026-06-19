@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import type { Document, Space } from "@/lib/types";
 import { SpaceSelector } from "@/components/SpaceSelector";
 import { AuthGuard } from "@/lib/auth-guard";
+import { AddDocumentModal } from "@/components/documents/AddDocumentModal";
 
 const STATE_STYLES: Record<string, string> = {
   ingested: "bg-yellow-100 text-yellow-800",
@@ -20,6 +21,7 @@ export default function DocumentsPage() {
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [spacesError, setSpacesError] = useState<string | null>(null);
   const [docsError, setDocsError] = useState<string | null>(null);
+  const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
     api.get<{ spaces: Space[] }>("/v1/spaces")
@@ -38,10 +40,30 @@ export default function DocumentsPage() {
       .finally(() => setLoadingDocs(false));
   }, [selectedSpaceId]);
 
+  const handleDocumentCreated = (newDoc: Document) => {
+    if (!selectedSpaceId || newDoc.space_id === selectedSpaceId) {
+      setDocuments((prev) => [newDoc, ...prev]);
+    }
+  };
+
   return (
     <AuthGuard>
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Documents</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Documents</h1>
+        <button
+          onClick={() => setShowModal(true)}
+          className="bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700"
+        >
+          Add Document
+        </button>
+      </div>
+      <AddDocumentModal
+        open={showModal}
+        spaces={spaces}
+        onClose={() => setShowModal(false)}
+        onCreated={handleDocumentCreated}
+      />
 
       <div className="flex items-center gap-3">
         {loadingSpaces ? (

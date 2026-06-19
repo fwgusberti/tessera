@@ -6,10 +6,19 @@ from tessera_core.domain.entities import (
     AgentCredential,
     AuditRecord,
     Chunk,
+    Company,
+    CompanyMembership,
+    CompanyRole,
     Connector,
     Document,
     DocumentLifecycleState,
     DocumentVersion,
+    DomainJoinPolicy,
+    Invitation,
+    InvitationStatus,
+    JoinRequest,
+    JoinRequestStatus,
+    OnboardingProgress,
     RolePermission,
     Space,
     SourceArtifact,
@@ -167,3 +176,94 @@ class AuditRepository(ABC):
     async def list_for_entity(
         self, entity_type: str, entity_id: UUID
     ) -> list[AuditRecord]: ...
+
+
+class OnboardingRepository(ABC):
+    @abstractmethod
+    async def create(self, progress: OnboardingProgress) -> OnboardingProgress: ...
+
+    @abstractmethod
+    async def get_by_user_id(self, user_id: UUID) -> OnboardingProgress | None: ...
+
+    @abstractmethod
+    async def advance_step(self, user_id: UUID, next_step: str, company_join_method: str | None = None) -> OnboardingProgress: ...
+
+    @abstractmethod
+    async def complete(self, user_id: UUID) -> OnboardingProgress: ...
+
+
+class CompanyRepository(ABC):
+    @abstractmethod
+    async def create(self, company: Company) -> Company: ...
+
+    @abstractmethod
+    async def get_by_id(self, company_id: UUID) -> Company | None: ...
+
+    @abstractmethod
+    async def add_membership(self, membership: CompanyMembership) -> CompanyMembership: ...
+
+    @abstractmethod
+    async def get_membership(self, user_id: UUID, company_id: UUID) -> CompanyMembership | None: ...
+
+    @abstractmethod
+    async def list_memberships_for_user(self, user_id: UUID) -> list[CompanyMembership]: ...
+
+
+class DomainPolicyRepository(ABC):
+    @abstractmethod
+    async def create(self, policy: DomainJoinPolicy) -> DomainJoinPolicy: ...
+
+    @abstractmethod
+    async def get_by_domain(self, domain: str) -> DomainJoinPolicy | None: ...
+
+    @abstractmethod
+    async def get_by_id(self, policy_id: UUID) -> DomainJoinPolicy | None: ...
+
+    @abstractmethod
+    async def list_by_company(self, company_id: UUID) -> list[DomainJoinPolicy]: ...
+
+    @abstractmethod
+    async def mark_verified(self, policy_id: UUID) -> DomainJoinPolicy: ...
+
+
+class InvitationRepository(ABC):
+    @abstractmethod
+    async def create(self, invitation: Invitation) -> Invitation: ...
+
+    @abstractmethod
+    async def create_bulk(self, invitations: list[Invitation]) -> list[Invitation]: ...
+
+    @abstractmethod
+    async def get_by_id(self, invitation_id: UUID) -> Invitation | None: ...
+
+    @abstractmethod
+    async def get_by_token_hash(self, token_hash: str) -> Invitation | None: ...
+
+    @abstractmethod
+    async def get_pending_for_email(self, email: str) -> list[Invitation]: ...
+
+    @abstractmethod
+    async def update_status(self, invitation_id: UUID, status: InvitationStatus) -> Invitation: ...
+
+    @abstractmethod
+    async def cancel(self, invitation_id: UUID) -> None: ...
+
+
+class JoinRequestRepository(ABC):
+    @abstractmethod
+    async def create(self, request: JoinRequest) -> JoinRequest: ...
+
+    @abstractmethod
+    async def get_by_user_and_company(self, user_id: UUID, company_id: UUID) -> JoinRequest | None: ...
+
+    @abstractmethod
+    async def get_by_id(self, request_id: UUID) -> JoinRequest | None: ...
+
+    @abstractmethod
+    async def list_pending_for_company(self, company_id: UUID) -> list[JoinRequest]: ...
+
+    @abstractmethod
+    async def decide(self, request_id: UUID, status: JoinRequestStatus, decided_by: UUID) -> JoinRequest: ...
+
+    @abstractmethod
+    async def cancel(self, request_id: UUID) -> None: ...
