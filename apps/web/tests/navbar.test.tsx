@@ -29,6 +29,7 @@ describe("NavBar", () => {
   it("renders navigation links", () => {
     render(<NavBar />);
     expect(screen.getByRole("link", { name: /search/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /documents/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /proposals/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /metrics/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /admin/i })).toBeInTheDocument();

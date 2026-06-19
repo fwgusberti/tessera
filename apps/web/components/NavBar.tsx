@@ -21,6 +21,9 @@ export function NavBar() {
         <a href="/search" className="text-sm text-gray-600 hover:text-gray-900">
           Search
         </a>
+        <a href="/documents" className="text-sm text-gray-600 hover:text-gray-900">
+          Documents
+        </a>
         <a href="/proposals" className="text-sm text-gray-600 hover:text-gray-900">
           Proposals
         </a>
