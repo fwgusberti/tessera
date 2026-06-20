@@ -274,9 +274,11 @@ class TestPublishDocumentOwnerContract:
 
         mock_doc_repo.set_owner.assert_called_once_with(doc_id, publisher_id)
         assert result["document"]["state"] == DocumentLifecycleState.PUBLISHED
-        # Verify approver is still recorded on the version (FR-005 — C1 from analysis)
-        approved_version_arg = mock_ver_repo.create.call_args[0][0]
-        assert approved_version_arg.approver_user_id == publisher_id
+        mock_ver_repo.create.assert_not_called()
+        mock_ver_repo.update_approval.assert_called_once()
+        call_version_id, call_approver_id, _ = mock_ver_repo.update_approval.call_args[0]
+        assert call_version_id == version_id
+        assert call_approver_id == publisher_id
 
     @pytest.mark.anyio
     async def test_publish_document_preserves_existing_owner(self):
@@ -308,6 +310,46 @@ class TestPublishDocumentOwnerContract:
             result = await publish_document(doc_id, MagicMock())
 
         mock_doc_repo.set_owner.assert_not_called()
+        assert result["document"]["state"] == DocumentLifecycleState.PUBLISHED
+
+
+class TestPublishDocumentVersionContract:
+    """Invariant: publish MUST update the existing version's approval metadata — never insert a new row."""
+
+    @pytest.mark.anyio
+    async def test_publish_document_records_approval_without_creating_version(self):
+        """ver_repo.update_approval MUST be called; ver_repo.create MUST NOT be called during publish."""
+        from tessera_api.routers.documents import publish_document
+
+        doc_id = uuid.uuid4()
+        version_id = uuid.uuid4()
+        space_id = uuid.uuid4()
+        publisher_id = uuid.uuid4()
+        owner_id = uuid.uuid4()
+
+        mock_doc_repo, mock_ver_repo, _, _, mock_get_db = _make_publish_mocks(
+            doc_id, version_id, space_id, owner_id=owner_id
+        )
+
+        with (
+            patch("tessera_api.adapters.database.get_db", mock_get_db),
+            patch("tessera_api.adapters.repo.SqlDocumentRepository", return_value=mock_doc_repo),
+            patch(
+                "tessera_api.adapters.repo.SqlDocumentVersionRepository", return_value=mock_ver_repo
+            ),
+            patch("tessera_api.adapters.audit.write_audit", new=AsyncMock()),
+            patch(
+                "tessera_api.auth.oidc.require_user",
+                new=AsyncMock(return_value={"id": str(publisher_id), "sub": str(publisher_id)}),
+            ),
+        ):
+            result = await publish_document(doc_id, MagicMock())
+
+        mock_ver_repo.create.assert_not_called()
+        mock_ver_repo.update_approval.assert_called_once()
+        call_version_id, call_approver_id, _ = mock_ver_repo.update_approval.call_args[0]
+        assert call_version_id == version_id
+        assert call_approver_id == publisher_id
         assert result["document"]["state"] == DocumentLifecycleState.PUBLISHED
 
 

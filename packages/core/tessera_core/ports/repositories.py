@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -8,7 +9,6 @@ from tessera_core.domain.entities import (
     Chunk,
     Company,
     CompanyMembership,
-    CompanyRole,
     Connector,
     Document,
     DocumentLifecycleState,
@@ -20,8 +20,8 @@ from tessera_core.domain.entities import (
     JoinRequestStatus,
     OnboardingProgress,
     RolePermission,
-    Space,
     SourceArtifact,
+    Space,
     UpdateProposal,
     User,
 )
@@ -82,6 +82,11 @@ class DocumentVersionRepository(ABC):
     @abstractmethod
     async def next_version_number(self, document_id: UUID) -> int: ...
 
+    @abstractmethod
+    async def update_approval(
+        self, version_id: UUID, approver_id: UUID, approved_at: datetime
+    ) -> DocumentVersion: ...
+
 
 class ChunkRepository(ABC):
     @abstractmethod
@@ -111,9 +116,7 @@ class ConnectorRepository(ABC):
     async def list_by_space(self, space_id: UUID) -> list[Connector]: ...
 
     @abstractmethod
-    async def update_sync_status(
-        self, connector_id: UUID, status: str
-    ) -> Connector: ...
+    async def update_sync_status(self, connector_id: UUID, status: str) -> Connector: ...
 
 
 class SourceArtifactRepository(ABC):
@@ -173,9 +176,7 @@ class AuditRepository(ABC):
     async def append(self, record: AuditRecord) -> None: ...
 
     @abstractmethod
-    async def list_for_entity(
-        self, entity_type: str, entity_id: UUID
-    ) -> list[AuditRecord]: ...
+    async def list_for_entity(self, entity_type: str, entity_id: UUID) -> list[AuditRecord]: ...
 
 
 class OnboardingRepository(ABC):
@@ -186,7 +187,9 @@ class OnboardingRepository(ABC):
     async def get_by_user_id(self, user_id: UUID) -> OnboardingProgress | None: ...
 
     @abstractmethod
-    async def advance_step(self, user_id: UUID, next_step: str, company_join_method: str | None = None) -> OnboardingProgress: ...
+    async def advance_step(
+        self, user_id: UUID, next_step: str, company_join_method: str | None = None
+    ) -> OnboardingProgress: ...
 
     @abstractmethod
     async def complete(self, user_id: UUID) -> OnboardingProgress: ...
@@ -254,7 +257,9 @@ class JoinRequestRepository(ABC):
     async def create(self, request: JoinRequest) -> JoinRequest: ...
 
     @abstractmethod
-    async def get_by_user_and_company(self, user_id: UUID, company_id: UUID) -> JoinRequest | None: ...
+    async def get_by_user_and_company(
+        self, user_id: UUID, company_id: UUID
+    ) -> JoinRequest | None: ...
 
     @abstractmethod
     async def get_by_id(self, request_id: UUID) -> JoinRequest | None: ...
@@ -263,7 +268,9 @@ class JoinRequestRepository(ABC):
     async def list_pending_for_company(self, company_id: UUID) -> list[JoinRequest]: ...
 
     @abstractmethod
-    async def decide(self, request_id: UUID, status: JoinRequestStatus, decided_by: UUID) -> JoinRequest: ...
+    async def decide(
+        self, request_id: UUID, status: JoinRequestStatus, decided_by: UUID
+    ) -> JoinRequest: ...
 
     @abstractmethod
     async def cancel(self, request_id: UUID) -> None: ...

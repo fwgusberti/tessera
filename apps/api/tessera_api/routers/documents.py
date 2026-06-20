@@ -158,14 +158,7 @@ async def publish_document(document_id: UUID, request: Request) -> dict:
         latest = versions[-1]
         now = datetime.now(UTC)
 
-        # Mark version as approved
-        approved_version = latest.model_copy(
-            update={
-                "approver_user_id": publisher_id,
-                "approved_at": now,
-            }
-        )
-        await ver_repo.create(approved_version)
+        await ver_repo.update_approval(latest.id, publisher_id, now)
 
         # Transition document state
         updated = lifecycle_publish(doc, version_id=latest.id, approver_id=publisher_id)

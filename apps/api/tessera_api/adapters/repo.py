@@ -367,6 +367,20 @@ class SqlDocumentVersionRepository(DocumentVersionRepository):
         )
         return (result.scalar() or 0) + 1
 
+    async def update_approval(
+        self, version_id: UUID, approver_id: UUID, approved_at: object
+    ) -> DocumentVersion:
+        await self._session.execute(
+            update(DocumentVersionModel)
+            .where(DocumentVersionModel.id == version_id)
+            .values(approver_user_id=approver_id, approved_at=approved_at)
+        )
+        result = await self._session.execute(
+            select(DocumentVersionModel).where(DocumentVersionModel.id == version_id)
+        )
+        model = result.scalar_one()
+        return _version_from_model(model)
+
 
 class SqlChunkRepository(ChunkRepository):
     def __init__(self, session: AsyncSession) -> None:
@@ -636,9 +650,7 @@ class SqlUserRepository(UserRepository):
         return _user_from_model(model) if model else None
 
     async def get_by_email(self, email: str) -> User | None:
-        result = await self._session.execute(
-            select(UserModel).where(UserModel.email == email)
-        )
+        result = await self._session.execute(select(UserModel).where(UserModel.email == email))
         model = result.scalar_one_or_none()
         return _user_from_model(model) if model else None
 
@@ -792,6 +804,7 @@ class SqlRefreshTokenRepository:
 # Onboarding
 # ---------------------------------------------------------------------------
 
+
 def _onboarding_from_model(m: OnboardingProgressModel) -> OnboardingProgress:
     return OnboardingProgress(
         id=m.id,
@@ -878,6 +891,7 @@ class SqlOnboardingRepository(OnboardingRepository):
 # Company
 # ---------------------------------------------------------------------------
 
+
 def _company_from_model(m: CompanyModel) -> Company:
     return Company(
         id=m.id,
@@ -957,6 +971,7 @@ class SqlCompanyRepository(CompanyRepository):
 # Domain Policy
 # ---------------------------------------------------------------------------
 
+
 def _domain_policy_from_model(m: DomainJoinPolicyModel) -> DomainJoinPolicy:
     return DomainJoinPolicy(
         id=m.id,
@@ -1025,6 +1040,7 @@ class SqlDomainPolicyRepository(DomainPolicyRepository):
 # ---------------------------------------------------------------------------
 # Invitation
 # ---------------------------------------------------------------------------
+
 
 def _invitation_from_model(m: InvitationModel) -> Invitation:
     return Invitation(
@@ -1134,6 +1150,7 @@ class SqlInvitationRepository(InvitationRepository):
 # JoinRequest
 # ---------------------------------------------------------------------------
 
+
 def _join_request_from_model(m: JoinRequestModel) -> JoinRequest:
     return JoinRequest(
         id=m.id,
@@ -1162,9 +1179,7 @@ class SqlJoinRequestRepository(JoinRequestRepository):
         await self._session.refresh(model)
         return _join_request_from_model(model)
 
-    async def get_by_user_and_company(
-        self, user_id: UUID, company_id: UUID
-    ) -> JoinRequest | None:
+    async def get_by_user_and_company(self, user_id: UUID, company_id: UUID) -> JoinRequest | None:
         result = await self._session.execute(
             select(JoinRequestModel).where(
                 JoinRequestModel.user_id == user_id,
