@@ -1,0 +1,168 @@
+openapi: "3.1.0"
+info:
+  title: Tessera Search API Contract
+  version: "1.0.0"
+
+paths:
+  /v1/search:
+    post:
+      summary: Semantic document search (ACL-first)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+            examples:
+              simple_query:
+                summary: Basic query
+                value:
+                  query: "mamadeira"
+              scoped_query:
+                summary: Scoped to specific spaces
+                value:
+                  query: "mamadeira"
+                  space_ids: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"]
+                  top_k: 5
+      responses:
+        "200":
+          description: Search results (may be empty list)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+              examples:
+                with_results:
+                  summary: Results found
+                  value:
+                    results:
+                      - document_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                        version_id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                        chunk_id: "c3d4e5f6-a7b8-9012-cdef-123456789012"
+                        score: 0.87
+                        snippet: "A mamadeira deve ser esterilizada..."
+                        citation:
+                          chunk_id: "c3d4e5f6-a7b8-9012-cdef-123456789012"
+                          document_version_id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                          quote: "A mamadeira deve ser esterilizada..."
+                          score: 0.87
+                empty_results:
+                  summary: No matches
+                  value:
+                    results: []
+        "401":
+          description: Unauthenticated — missing or invalid JWT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation error — missing or malformed request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Embedding service unavailable (Ollama unreachable or returned error)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                ollama_down:
+                  value:
+                    detail: "Embedding service unavailable"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    SearchRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          minLength: 1
+          example: "mamadeira"
+        space_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          nullable: true
+          default: null
+        language:
+          type: string
+          nullable: true
+          example: "pt-BR"
+        top_k:
+          type: integer
+          default: 10
+          minimum: 1
+
+    SearchResponse:
+      type: object
+      required:
+        - results
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+
+    SearchResult:
+      type: object
+      required:
+        - document_id
+        - version_id
+        - chunk_id
+        - score
+        - snippet
+        - citation
+      properties:
+        document_id:
+          type: string
+          format: uuid
+        version_id:
+          type: string
+          format: uuid
+        chunk_id:
+          type: string
+          format: uuid
+        score:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        snippet:
+          type: string
+          maxLength: 300
+        citation:
+          type: object
+          properties:
+            chunk_id:
+              type: string
+              format: uuid
+            document_version_id:
+              type: string
+              format: uuid
+            quote:
+              type: string
+              maxLength: 200
+            score:
+              type: number
+              format: float
+
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string

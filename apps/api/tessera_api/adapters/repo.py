@@ -434,7 +434,7 @@ class SqlChunkRepository(ChunkRepository):
             JOIN documents d ON d.id = c.document_id
             WHERE
                 c.space_id = ANY(CAST(:space_ids AS uuid[]))
-                AND c.confidentiality = ANY(:allowed_confidentiality)
+                AND c.confidentiality = ANY(CAST(:allowed_confidentiality AS text[]))
                 AND d.state = 'published'
                 AND c.embedding IS NOT NULL
             ORDER BY c.embedding <=> CAST(:embedding AS vector)
@@ -445,7 +445,7 @@ class SqlChunkRepository(ChunkRepository):
             {
                 "embedding": str(query_embedding),
                 "space_ids": "{" + ",".join(space_id_strs) + "}",
-                "allowed_confidentiality": allowed_levels,
+                "allowed_confidentiality": "{" + ",".join(allowed_levels) + "}",
                 "top_k": top_k,
             },
         )

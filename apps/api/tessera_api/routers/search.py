@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Request
+import httpx
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 router = APIRouter(tags=["search"])
@@ -29,7 +30,10 @@ async def search(body: SearchRequest, request: Request) -> dict:
 
     await require_user(request)
     embedding_provider = OllamaEmbeddingProvider()
-    embeddings = await embedding_provider.embed([body.query])
+    try:
+        embeddings = await embedding_provider.embed([body.query])
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="Embedding service unavailable") from exc
     query_embedding = embeddings[0]
 
     async with get_db() as session:
