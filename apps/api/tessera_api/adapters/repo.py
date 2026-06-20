@@ -387,18 +387,37 @@ class SqlChunkRepository(ChunkRepository):
         self._session = session
 
     async def upsert_chunks(self, chunks: list[Chunk]) -> None:
-        from sqlalchemy.dialects.postgresql import insert
+        from sqlalchemy import text
 
         for chunk in chunks:
-            _stmt = insert(type("chunks", (), {"__tablename__": "chunks"})).values(  # noqa: F841
-                id=chunk.id,
-                document_version_id=chunk.document_version_id,
-                document_id=chunk.document_id,
-                space_id=chunk.space_id,
-                ordinal=chunk.ordinal,
-                text=chunk.text,
-                confidentiality=chunk.confidentiality.value,
-                language=chunk.language,
+            await self._session.execute(
+                text("""
+                    INSERT INTO chunks
+                        (id, document_version_id, document_id, space_id,
+                         ordinal, text, confidentiality, language, embedding)
+                    VALUES
+                        (:id, :document_version_id, :document_id, :space_id,
+                         :ordinal, :text, :confidentiality, :language,
+                         CAST(:embedding AS vector))
+                    ON CONFLICT (id) DO UPDATE SET
+                        document_version_id = EXCLUDED.document_version_id,
+                        ordinal             = EXCLUDED.ordinal,
+                        text                = EXCLUDED.text,
+                        confidentiality     = EXCLUDED.confidentiality,
+                        language            = EXCLUDED.language,
+                        embedding           = EXCLUDED.embedding
+                """),
+                {
+                    "id": chunk.id,
+                    "document_version_id": chunk.document_version_id,
+                    "document_id": chunk.document_id,
+                    "space_id": chunk.space_id,
+                    "ordinal": chunk.ordinal,
+                    "text": chunk.text,
+                    "confidentiality": chunk.confidentiality.value,
+                    "language": chunk.language,
+                    "embedding": str(chunk.embedding) if chunk.embedding is not None else None,
+                },
             )
 
     async def delete_by_document(self, document_id: UUID) -> None:

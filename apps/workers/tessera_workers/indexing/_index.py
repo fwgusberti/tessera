@@ -36,9 +36,15 @@ async def _do_index(version_id: UUID, document_id: UUID, space_id: UUID) -> None
         if version is None or document is None:
             return
 
+        # Prepend title so semantic search can match on document title
+        title_prefix = f"# {document.title}\n\n"
+        version_with_title = version.model_copy(
+            update={"content_markdown": title_prefix + version.content_markdown}
+        )
+
         # Generate chunks
         chunks = chunk_document(
-            version=version,
+            version=version_with_title,
             document_id=document_id,
             space_id=space_id,
             confidentiality=document.confidentiality,

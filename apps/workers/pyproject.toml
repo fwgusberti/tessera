@@ -8,6 +8,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "tessera-core",
+    "tessera-api",
     "celery[redis]>=5.4",
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.1",
@@ -25,6 +26,10 @@ dependencies = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["tessera_workers"]
+
+[tool.uv.sources]
+tessera-core = { path = "../../packages/core", editable = true }
+tessera-api = { path = "../api", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -44,3 +49,10 @@ known-first-party = ["tessera_workers", "tessera_core"]
 [tool.black]
 line-length = 100
 target-version = ["py312"]
+
+[dependency-groups]
+dev = [
+    "anyio>=4.13.0",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+]

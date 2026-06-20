@@ -34,10 +34,12 @@ export default function SearchPage() {
   const [answer, setAnswer] = useState<AnswerResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<"search" | "ask">("search");
+  const [searched, setSearched] = useState(false);
 
   const handleSearch = async () => {
     if (!query.trim()) return;
     setLoading(true);
+    setSearched(true);
     try {
       if (mode === "search") {
         const data = await api.post<{ results: SearchResult[] }>("/v1/search", { query });
@@ -126,6 +128,10 @@ export default function SearchPage() {
           )}
           <p className="text-xs text-gray-400">Confidence: {(answer.confidence * 100).toFixed(0)}%</p>
         </div>
+      )}
+
+      {searched && !loading && mode === "search" && results.length === 0 && !answer && (
+        <p className="text-sm text-gray-500 text-center py-4">No results found.</p>
       )}
 
       {results.length > 0 && (

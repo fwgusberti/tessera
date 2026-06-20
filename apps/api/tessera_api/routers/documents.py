@@ -174,4 +174,11 @@ async def publish_document(document_id: UUID, request: Request) -> dict:
             entity_id=document_id,
         )
 
+    from tessera_api.adapters.celery import get_celery_app
+
+    get_celery_app().send_task(
+        "tessera.index_document_version",
+        args=[str(latest.id), str(document_id), str(doc.space_id)],
+    )
+
     return {"document": updated.model_dump(), "version": latest.model_dump()}
