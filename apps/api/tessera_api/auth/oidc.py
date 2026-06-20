@@ -54,13 +54,14 @@ async def require_user(request: Request) -> dict[str, Any]:
     # 2. JWT Bearer token
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
-        token = auth_header[len("Bearer "):]
+        token = auth_header[len("Bearer ") :]
         try:
             from tessera_api.auth.jwt_auth import verify_access_token
 
             claims = verify_access_token(token)
             return {
                 "sub": claims["sub"],
+                "id": claims["sub"],
                 "email": claims.get("email", ""),
                 "is_admin": claims.get("is_admin", False),
             }
