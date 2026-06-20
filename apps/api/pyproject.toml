@@ -26,6 +26,8 @@ dependencies = [
     "itsdangerous>=2.2",
     "bcrypt>=4.0",
     "fastapi-mail>=1.4",
+    "celery>=5.3",
+    "redis>=5.0",
 ]
 
 [tool.hatch.build.targets.wheel]
