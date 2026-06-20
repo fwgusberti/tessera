@@ -54,6 +54,7 @@ echo -e "${CY}[api    ]${NC} Running migrations..."
 # ── services ──────────────────────────────────────────────────────────────────
 (cd "$ROOT/apps/api" && \
   DATABASE_URL="$DB" REDIS_URL="$REDIS" SECRET_KEY=dev-secret-key \
+  OLLAMA_BASE_URL=http://localhost:11434 \
   uv run uvicorn tessera_api.main:app --reload --port 8000 2>&1 | prefix "$CY" "api") &
 PIDS+=($!)
 
