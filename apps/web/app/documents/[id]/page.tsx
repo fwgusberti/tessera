@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { Document, DocumentVersion } from "@/lib/types";
 import { AuthGuard } from "@/lib/auth-guard";
+import { useAuth } from "@/lib/auth";
 
 const STATE_STYLES: Record<string, string> = {
   ingested: "bg-yellow-100 text-yellow-800",
@@ -21,6 +22,11 @@ export default function DocumentDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [reindexing, setReindexing] = useState(false);
+  const [reindexMessage, setReindexMessage] = useState<string | null>(null);
+  const [reindexError, setReindexError] = useState<string | null>(null);
+  const reindexTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { user } = useAuth();
 
   useEffect(() => {
     if (!id) return;
@@ -37,6 +43,31 @@ export default function DocumentDetailPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
+  useEffect(() => {
+    return () => {
+      if (reindexTimerRef.current) clearTimeout(reindexTimerRef.current);
+    };
+  }, []);
+
+  const handleReindex = async () => {
+    if (!document) return;
+    if (reindexTimerRef.current) clearTimeout(reindexTimerRef.current);
+    setReindexing(true);
+    setReindexError(null);
+    setReindexMessage(null);
+    try {
+      await api.post(`/v1/documents/${id}/reindex`, {});
+      setReindexMessage("Reindex queued");
+      reindexTimerRef.current = setTimeout(() => {
+        setReindexMessage(null);
+        setReindexing(false);
+      }, 3000);
+    } catch (err: unknown) {
+      setReindexError(err instanceof Error ? err.message : "Failed to queue reindex");
+      setReindexing(false);
+    }
+  };
+
   const handlePublish = async () => {
     if (!document) return;
     setPublishing(true);
@@ -50,6 +81,11 @@ export default function DocumentDetailPage() {
       setPublishing(false);
     }
   };
+
+  const canReindex =
+    document !== null &&
+    document.state === "published" &&
+    (user?.id === document.owner_user_id || user?.isAdmin === true);
 
   return (
     <AuthGuard>
@@ -87,6 +123,24 @@ export default function DocumentDetailPage() {
                 </button>
                 {publishError && (
                   <p className="text-xs text-red-600">{publishError}</p>
+                )}
+              </div>
+            )}
+
+            {canReindex && (
+              <div className="flex flex-col items-end gap-1">
+                <button
+                  onClick={handleReindex}
+                  disabled={reindexing}
+                  className="bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {reindexing ? "Reindexing…" : "Reindex"}
+                </button>
+                {reindexMessage && (
+                  <p className="text-xs text-green-600">{reindexMessage}</p>
+                )}
+                {reindexError && (
+                  <p className="text-xs text-red-600">{reindexError}</p>
                 )}
               </div>
             )}

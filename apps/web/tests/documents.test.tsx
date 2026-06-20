@@ -1,5 +1,5 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import React from "react";
 
 vi.mock("@/lib/api", () => ({
@@ -300,5 +300,120 @@ describe("Add Document modal", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /add document/i }));
     expect((screen.getByLabelText(/title/i) as HTMLInputElement).value).toBe("");
+  });
+});
+
+// ─── Document detail page — Reindex button ────────────────────────────────────
+// useParams is hoisted to return { id: "d1" } by the "Document detail page" beforeEach above.
+// All reindex tests use id: "d1" API paths to stay consistent with that hoisted mock.
+
+const reindexPublishedOwned = { ...mockDocuments[0], state: "published" as const, owner_user_id: "u1" };
+const reindexPublishedNotOwned = { ...mockDocuments[0], state: "published" as const, owner_user_id: "u2" };
+const reindexIngested = mockDocuments[0]; // state: "ingested", owner_user_id: "u1"
+const reindexArchived = { ...mockDocuments[0], state: "archived" as const, owner_user_id: "u1" };
+
+function setupReindexMock(doc: typeof mockDocuments[0]) {
+  mockApi.get.mockImplementation((path: string) => {
+    if (path === "/v1/documents/d1") return Promise.resolve({ document: doc, current_version: mockVersion });
+    if (path === "/v1/documents/d1/versions") return Promise.resolve({ versions: mockVersions });
+    return Promise.resolve({});
+  });
+}
+
+describe("Document detail page — Reindex button", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("shows Reindex button for owner of published document", async () => {
+    const { default: DocumentDetailPage } = await import("@/app/documents/[id]/page");
+    setupReindexMock(reindexPublishedOwned);
+    render(<DocumentDetailPage />);
+    await waitFor(() => expect(screen.getByText("API Reference")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /^reindex$/i })).toBeInTheDocument();
+  });
+
+  it("shows 'Reindex queued' on success and re-enables button after 3 seconds", async () => {
+    const { default: DocumentDetailPage } = await import("@/app/documents/[id]/page");
+    setupReindexMock(reindexPublishedOwned);
+    mockApi.post.mockResolvedValue({ queued: true, document_id: "d1" });
+    render(<DocumentDetailPage />);
+
+    // Wait with real timers so waitFor's internal setTimeout works
+    await waitFor(() => expect(screen.getByRole("button", { name: /^reindex$/i })).toBeInTheDocument());
+
+    // Enable fake timers only after initial render — now component's setTimeout is fake
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: /^reindex$/i }));
+
+    // Flush the resolved api.post promise and resulting state updates
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/reindex queued/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /reindexing/i })).toBeDisabled();
+
+    // Advance past the 3-second auto-dismiss timer
+    act(() => vi.advanceTimersByTime(3000));
+
+    expect(screen.queryByText(/reindex queued/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^reindex$/i })).toBeEnabled();
+  });
+
+  it("shows server error inline on reindex failure and re-enables button", async () => {
+    const { default: DocumentDetailPage } = await import("@/app/documents/[id]/page");
+    setupReindexMock(reindexPublishedOwned);
+    mockApi.post.mockRejectedValue(new Error("Indexing service unavailable"));
+    render(<DocumentDetailPage />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /^reindex$/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /^reindex$/i }));
+
+    await waitFor(() => expect(screen.getByText(/indexing service unavailable/i)).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /^reindex$/i })).toBeEnabled();
+  });
+
+  it("disables Reindex button while request is in-flight", async () => {
+    const { default: DocumentDetailPage } = await import("@/app/documents/[id]/page");
+    setupReindexMock(reindexPublishedOwned);
+    let resolvePost!: (v: unknown) => void;
+    mockApi.post.mockReturnValue(new Promise(res => { resolvePost = res; }));
+    render(<DocumentDetailPage />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /^reindex$/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /^reindex$/i }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /reindexing/i })).toBeDisabled());
+    resolvePost({ queued: true });
+  });
+
+  it("hides Reindex button for non-owner non-admin on published document", async () => {
+    const { default: DocumentDetailPage } = await import("@/app/documents/[id]/page");
+    setupReindexMock(reindexPublishedNotOwned);
+    render(<DocumentDetailPage />);
+    await waitFor(() => expect(screen.getByText("API Reference")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /reindex/i })).not.toBeInTheDocument();
+  });
+
+  it("hides Reindex button for ingested document even when user is owner", async () => {
+    const { default: DocumentDetailPage } = await import("@/app/documents/[id]/page");
+    setupReindexMock(reindexIngested);
+    render(<DocumentDetailPage />);
+    await waitFor(() => expect(screen.getByText("API Reference")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /reindex/i })).not.toBeInTheDocument();
+  });
+
+  it("hides Reindex button for archived document even when user is owner", async () => {
+    const { default: DocumentDetailPage } = await import("@/app/documents/[id]/page");
+    setupReindexMock(reindexArchived);
+    render(<DocumentDetailPage />);
+    await waitFor(() => expect(screen.getByText("API Reference")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /reindex/i })).not.toBeInTheDocument();
   });
 });
