@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 from uuid import UUID
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+logger = structlog.get_logger()
 
 
 async def _get_session() -> AsyncSession:
@@ -56,9 +59,18 @@ async def _do_index(version_id: UUID, document_id: UUID, space_id: UUID) -> None
         embedding_provider = OllamaEmbeddingProvider()
         texts = [c.text for c in chunks]
         if texts:
-            embeddings = await embedding_provider.embed(texts)
-            for chunk, emb in zip(chunks, embeddings, strict=False):
-                chunk.embedding = emb
+            try:
+                embeddings = await embedding_provider.embed(texts)
+                for chunk, emb in zip(chunks, embeddings, strict=False):
+                    chunk.embedding = emb
+            except Exception as exc:
+                logger.error(
+                    "indexing_embedding_failed",
+                    document_id=str(document_id),
+                    version_id=str(version_id),
+                    error=str(exc),
+                )
+                raise
 
         # Remove old chunks and write new ones
         await chunk_repo.delete_by_document(document_id)

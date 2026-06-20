@@ -182,3 +182,44 @@ async def publish_document(document_id: UUID, request: Request) -> dict:
     )
 
     return {"document": updated.model_dump(), "version": latest.model_dump()}
+
+
+@router.post("/documents/{document_id}/reindex")
+async def reindex_document(document_id: UUID, request: Request) -> dict:
+    from tessera_api.adapters.celery import get_celery_app
+    from tessera_api.adapters.database import get_db
+    from tessera_api.adapters.repo import SqlDocumentRepository, SqlDocumentVersionRepository
+    from tessera_api.auth.oidc import require_user
+
+    user_info = await require_user(request)
+    user_id_str = user_info.get("id") or user_info.get("sub")
+    user_id = UUID(user_id_str) if user_id_str else None
+    is_admin = user_info.get("is_admin", False)
+
+    async with get_db() as session:
+        doc_repo = SqlDocumentRepository(session)
+        ver_repo = SqlDocumentVersionRepository(session)
+
+        doc = await doc_repo.get_by_id(document_id)
+        if doc is None:
+            raise HTTPException(status_code=404)
+
+        if not is_admin and doc.owner_user_id != user_id:
+            raise HTTPException(
+                status_code=403, detail="Only the document owner or an admin may reindex"
+            )
+
+        if doc.state != DocumentLifecycleState.PUBLISHED:
+            raise HTTPException(status_code=400, detail="Only published documents can be reindexed")
+
+        versions = await ver_repo.list_by_document(document_id)
+        if not versions:
+            raise HTTPException(status_code=400, detail="No versions to index")
+        latest = versions[-1]
+
+    get_celery_app().send_task(
+        "tessera.index_document_version",
+        args=[str(latest.id), str(document_id), str(doc.space_id)],
+    )
+
+    return {"queued": True, "document_id": str(document_id)}

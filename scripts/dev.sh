@@ -59,7 +59,7 @@ echo -e "${CY}[api    ]${NC} Running migrations..."
 PIDS+=($!)
 
 (cd "$ROOT/apps/workers" && \
-  DATABASE_URL="$DB" REDIS_URL="$REDIS" \
+  DATABASE_URL="$DB" REDIS_URL="$REDIS" OLLAMA_BASE_URL=http://localhost:11434 \
   uv run celery -A tessera_workers.celery_app worker --loglevel=info 2>&1 | prefix "$MG" "workers") &
 PIDS+=($!)
 

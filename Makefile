@@ -37,7 +37,7 @@ api:
 
 workers:
 	cd apps/workers && \
-		DATABASE_URL=$(DB) REDIS_URL=$(REDIS) \
+		DATABASE_URL=$(DB) REDIS_URL=$(REDIS) OLLAMA_BASE_URL=http://localhost:11434 \
 		uv run celery -A tessera_workers.celery_app worker --loglevel=info
 
 mcp:
