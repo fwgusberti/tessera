@@ -4,6 +4,7 @@ ROOT  := $(shell pwd)
 DB    := postgresql+psycopg://tessera:tessera@localhost:5432/tessera
 REDIS := redis://localhost:6379/0
 HOST  ?= localhost
+ANTHROPIC_API_KEY ?= $(shell echo "$ANTHROPIC_API_KEY")
 
 ## ── full stack ─────────────────────────────────────────────────────────────
 
@@ -35,11 +36,13 @@ api:
 	cd apps/api && \
 		DATABASE_URL=$(DB) REDIS_URL=$(REDIS) SECRET_KEY=dev-secret-key \
 		OLLAMA_BASE_URL=http://localhost:11434 \
+		ANTHROPIC_API_KEY=$(ANTHROPIC_API_KEY) \
 		uv run uvicorn tessera_api.main:app --reload --host 0.0.0.0 --port 8000
 
 workers:
 	cd apps/workers && \
 		DATABASE_URL=$(DB) REDIS_URL=$(REDIS) OLLAMA_BASE_URL=http://localhost:11434 \
+		ANTHROPIC_API_KEY=$(ANTHROPIC_API_KEY) \
 		uv run celery -A tessera_workers.celery_app worker --loglevel=info
 
 mcp:

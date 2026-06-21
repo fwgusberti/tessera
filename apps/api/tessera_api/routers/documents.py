@@ -36,17 +36,34 @@ async def list_documents(
     request: Request = None,
 ) -> dict:
     from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.repo import SqlDocumentRepository
+    from tessera_api.adapters.repo import (
+        SqlDocumentRepository,
+        SqlSpaceRepository,
+        SqlUserRepository,
+    )
     from tessera_api.auth.oidc import require_user
 
-    await require_user(request)
+    user_info = await require_user(request)
     async with get_db() as session:
-        repo = SqlDocumentRepository(session)
+        doc_repo = SqlDocumentRepository(session)
         state_enum = DocumentLifecycleState(state) if state else None
         if space_id:
-            docs = await repo.list_by_space(space_id, state_enum)
+            docs = await doc_repo.list_by_space(space_id, state_enum)
         else:
-            docs = []
+            user_repo = SqlUserRepository(session)
+            space_repo = SqlSpaceRepository(session)
+            user = await user_repo.get_by_subject(user_info["sub"])
+            if user is None:
+                import contextlib
+
+                with contextlib.suppress(ValueError, KeyError):
+                    user = await user_repo.get_by_id(UUID(user_info["sub"]))
+            if user is None:
+                docs = []
+            else:
+                spaces = await space_repo.list_for_user(user)
+                space_ids = [s.id for s in spaces]
+                docs = await doc_repo.list_by_space_ids(space_ids, state_enum)
     return {"documents": [d.model_dump() for d in docs]}
 
 

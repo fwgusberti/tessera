@@ -60,6 +60,13 @@ class DocumentRepository(ABC):
     ) -> list[Document]: ...
 
     @abstractmethod
+    async def list_by_space_ids(
+        self,
+        space_ids: list[UUID],
+        state: DocumentLifecycleState | None = None,
+    ) -> list[Document]: ...
+
+    @abstractmethod
     async def update_state(self, document_id: UUID, state: DocumentLifecycleState) -> Document: ...
 
     @abstractmethod

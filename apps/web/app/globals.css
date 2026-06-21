@@ -24,3 +24,14 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
 }
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+textarea,
+select {
+  color: var(--color-slate-900);
+}
+
+::placeholder {
+  color: var(--color-slate-400);
+  opacity: 1;
+}

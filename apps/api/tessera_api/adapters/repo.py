@@ -234,7 +234,17 @@ class SqlSpaceRepository(SpaceRepository):
         return [_space_from_model(m) for m in result.scalars().all()]
 
     async def list_for_user(self, user: User) -> list[Space]:
-        return await self.list_all()
+        if user.is_admin:
+            return await self.list_all()
+        if not user.groups:
+            return []
+        result = await self._session.execute(
+            select(SpaceModel)
+            .join(RolePermissionModel, RolePermissionModel.space_id == SpaceModel.id)
+            .where(RolePermissionModel.idp_group.in_(user.groups))
+            .distinct()
+        )
+        return [_space_from_model(m) for m in result.scalars().all()]
 
     async def create_role_permission(self, permission: RolePermission) -> RolePermission:
         model = RolePermissionModel(
@@ -287,6 +297,17 @@ class SqlDocumentRepository(DocumentRepository):
         self, space_id: UUID, state: DocumentLifecycleState | None = None
     ) -> list[Document]:
         q = select(DocumentModel).where(DocumentModel.space_id == space_id)
+        if state:
+            q = q.where(DocumentModel.state == state.value)
+        result = await self._session.execute(q)
+        return [_doc_from_model(m) for m in result.scalars().all()]
+
+    async def list_by_space_ids(
+        self, space_ids: list[UUID], state: DocumentLifecycleState | None = None
+    ) -> list[Document]:
+        if not space_ids:
+            return []
+        q = select(DocumentModel).where(DocumentModel.space_id.in_(space_ids))
         if state:
             q = q.where(DocumentModel.state == state.value)
         result = await self._session.execute(q)

@@ -6,8 +6,10 @@ from uuid import UUID
 
 import pytest
 
+from tessera_core.domain.entities import Confidentiality, Document, DocumentLifecycleState
 from tessera_core.ports.connector import ArtifactRecord, ConnectorPlugin
 from tessera_core.ports.providers import EmbeddingProvider, LLMProvider
+from tessera_core.ports.repositories import DocumentRepository
 
 
 class ConcreteConnector(ConnectorPlugin):
@@ -75,6 +77,78 @@ class TestEmbeddingProvider:
         result = await embedder.embed(["hello", "world"])
         assert len(result) == 2
         assert len(result[0]) == 1024
+
+
+class ConcreteDocumentRepository(DocumentRepository):
+    def __init__(self, docs: list[Document] | None = None) -> None:
+        self._docs = docs or []
+
+    async def create(self, document: Document) -> Document:
+        return document
+
+    async def get_by_id(self, document_id: UUID) -> Document | None:
+        return None
+
+    async def list_by_space(self, space_id: UUID, state: DocumentLifecycleState | None = None) -> list[Document]:
+        return [d for d in self._docs if d.space_id == space_id]
+
+    async def list_by_space_ids(
+        self, space_ids: list[UUID], state: DocumentLifecycleState | None = None
+    ) -> list[Document]:
+        if not space_ids:
+            return []
+        docs = [d for d in self._docs if d.space_id in space_ids]
+        if state:
+            docs = [d for d in docs if d.state == state]
+        return docs
+
+    async def update_state(self, document_id: UUID, state: DocumentLifecycleState) -> Document:
+        raise NotImplementedError
+
+    async def set_current_version(self, document_id: UUID, version_id: UUID) -> Document:
+        raise NotImplementedError
+
+    async def set_owner(self, document_id: UUID, user_id: UUID) -> Document:
+        raise NotImplementedError
+
+
+class TestDocumentRepositoryPort:
+    @pytest.mark.asyncio
+    async def test_list_by_space_ids_empty_returns_empty(self):
+        """list_by_space_ids([]) MUST return [] without querying any docs."""
+        space_id = uuid.uuid4()
+        doc = Document(
+            space_id=space_id,
+            title="Doc",
+            confidentiality=Confidentiality.INTERNAL,
+            state=DocumentLifecycleState.PUBLISHED,
+        )
+        repo = ConcreteDocumentRepository(docs=[doc])
+        result = await repo.list_by_space_ids([])
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_by_space_ids_returns_matching_documents(self):
+        """list_by_space_ids(space_ids) MUST return docs whose space_id is in the list."""
+        space_a = uuid.uuid4()
+        space_b = uuid.uuid4()
+        doc_a = Document(space_id=space_a, title="A", confidentiality=Confidentiality.INTERNAL, state=DocumentLifecycleState.PUBLISHED)
+        doc_b = Document(space_id=space_b, title="B", confidentiality=Confidentiality.INTERNAL, state=DocumentLifecycleState.PUBLISHED)
+        repo = ConcreteDocumentRepository(docs=[doc_a, doc_b])
+        result = await repo.list_by_space_ids([space_a])
+        assert len(result) == 1
+        assert result[0].space_id == space_a
+
+    @pytest.mark.asyncio
+    async def test_list_by_space_ids_state_filter(self):
+        """list_by_space_ids with state MUST exclude docs not in that state."""
+        space_id = uuid.uuid4()
+        doc_pub = Document(space_id=space_id, title="Pub", confidentiality=Confidentiality.INTERNAL, state=DocumentLifecycleState.PUBLISHED)
+        doc_ing = Document(space_id=space_id, title="Ing", confidentiality=Confidentiality.INTERNAL, state=DocumentLifecycleState.INGESTED)
+        repo = ConcreteDocumentRepository(docs=[doc_pub, doc_ing])
+        result = await repo.list_by_space_ids([space_id], state=DocumentLifecycleState.PUBLISHED)
+        assert len(result) == 1
+        assert result[0].title == "Pub"
 
 
 class TestLLMProvider:

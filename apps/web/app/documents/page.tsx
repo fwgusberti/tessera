@@ -23,6 +23,16 @@ export default function DocumentsPage() {
   const [docsError, setDocsError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
 
+  const fetchDocuments = (spaceId: string | null) => {
+    setLoadingDocs(true);
+    setDocsError(null);
+    const url = spaceId ? `/v1/documents?space_id=${spaceId}` : "/v1/documents";
+    api.get<{ documents: Document[] }>(url)
+      .then((data) => setDocuments(data.documents ?? []))
+      .catch((err) => setDocsError(err.message ?? "Failed to load documents"))
+      .finally(() => setLoadingDocs(false));
+  };
+
   useEffect(() => {
     api.get<{ spaces: Space[] }>("/v1/spaces")
       .then((data) => setSpaces(data.spaces))
@@ -31,13 +41,8 @@ export default function DocumentsPage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedSpaceId) return;
-    setLoadingDocs(true);
-    setDocsError(null);
-    api.get<{ documents: Document[] }>(`/v1/documents?space_id=${selectedSpaceId}`)
-      .then((data) => setDocuments(data.documents))
-      .catch((err) => setDocsError(err.message ?? "Failed to load documents"))
-      .finally(() => setLoadingDocs(false));
+    fetchDocuments(selectedSpaceId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSpaceId]);
 
   const handleDocumentCreated = (newDoc: Document) => {
@@ -75,23 +80,23 @@ export default function DocumentsPage() {
             spaces={spaces}
             selectedId={selectedSpaceId}
             onChange={(id) => {
-              setSelectedSpaceId(id);
+              setSelectedSpaceId(id || null);
               setDocuments([]);
             }}
           />
         )}
       </div>
 
-      {!selectedSpaceId && !loadingSpaces && (
-        <p className="text-sm text-slate-500">Select a space to see its documents.</p>
-      )}
-
       {loadingDocs && <p className="text-sm text-slate-500">Loading documents…</p>}
 
       {docsError && <p className="text-sm text-red-600">{docsError}</p>}
 
-      {selectedSpaceId && !loadingDocs && !docsError && documents.length === 0 && (
-        <p className="text-sm text-slate-500">No documents in this space.</p>
+      {!loadingDocs && !docsError && documents.length === 0 && (
+        <p className="text-sm text-slate-500">
+          {selectedSpaceId
+            ? "No documents in this space."
+            : "No documents found across your accessible spaces."}
+        </p>
       )}
 
       {documents.length > 0 && (
