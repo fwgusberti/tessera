@@ -186,6 +186,15 @@ class RefreshToken(BaseModel):
     is_revoked: bool = False
 
 
+class PasswordResetToken(BaseModel):
+    id: UUID = Field(default_factory=uuid.uuid4)
+    user_id: UUID
+    token_hash: str
+    created_at: datetime | None = None
+    expires_at: datetime
+    consumed_at: datetime | None = None
+
+
 class AuditRecord(BaseModel):
     id: UUID = Field(default_factory=uuid.uuid4)
     actor_type: str

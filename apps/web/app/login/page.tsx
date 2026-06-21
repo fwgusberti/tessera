@@ -9,6 +9,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirect = searchParams.get("redirect");
+  const resetSuccess = searchParams.get("reset") === "success";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -66,6 +67,11 @@ function LoginForm() {
     <div className="min-h-dvh flex items-center justify-center py-8 sm:py-12">
       <div className="bg-white rounded border p-8 w-full max-w-sm shadow-sm">
         <h1 className="text-2xl font-bold text-slate-900 mb-6">Sign in to Tessera</h1>
+        {resetSuccess && (
+          <div className="mb-4 rounded border border-slate-200 bg-slate-100 px-4 py-3 text-sm text-slate-700">
+            Your password has been reset. Please sign in with your new password.
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">
@@ -87,9 +93,14 @@ function LoginForm() {
             )}
           </div>
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1">
-              Password
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label htmlFor="password" className="block text-sm font-medium text-slate-700">
+                Password
+              </label>
+              <a href="/forgot-password" className="text-xs text-indigo-600 hover:underline">
+                Forgot password?
+              </a>
+            </div>
             <input
               id="password"
               type="password"

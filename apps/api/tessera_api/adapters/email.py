@@ -79,3 +79,18 @@ class FastMailEmailAdapter(EmailPort):
             subject = f"Your join request to {company_name} was not approved"
             body = f"<p>Your request to join <strong>{company_name}</strong> was not approved.</p>"
         await self._send(to, subject, body)
+
+    async def send_password_reset(
+        self,
+        *,
+        to: str,
+        reset_url: str,
+        expires_in_minutes: int,
+    ) -> None:
+        body = (
+            f"<p>You requested a password reset for your Tessera account.</p>"
+            f"<p><a href='{reset_url}'>Reset your password</a></p>"
+            f"<p>This link expires in {expires_in_minutes} minutes. "
+            f"If you did not request this, you can safely ignore this email.</p>"
+        )
+        await self._send(to, "Reset your Tessera password", body)

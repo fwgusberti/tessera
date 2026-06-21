@@ -46,12 +46,17 @@ export function NavBar() {
             Admin
           </a>
           {status === "authenticated" && (
-            <button
-              onClick={handleLogout}
-              className="text-sm text-slate-600 hover:text-slate-900"
-            >
-              Sign out
-            </button>
+            <>
+              <a href="/account" className="text-sm text-slate-600 hover:text-slate-900">
+                Account
+              </a>
+              <button
+                onClick={handleLogout}
+                className="text-sm text-slate-600 hover:text-slate-900"
+              >
+                Sign out
+              </button>
+            </>
           )}
         </div>
         {/* Hamburger button (mobile only) */}
@@ -118,15 +123,24 @@ export function NavBar() {
                 Admin
               </a>
               {status === "authenticated" && (
-                <button
-                  onClick={async () => {
-                    setIsMenuOpen(false);
-                    await handleLogout();
-                  }}
-                  className="px-2 py-3 text-sm text-left text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-                >
-                  Sign out
-                </button>
+                <>
+                  <a
+                    href="/account"
+                    onClick={() => setIsMenuOpen(false)}
+                    className="px-2 py-3 text-sm text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                  >
+                    Account
+                  </a>
+                  <button
+                    onClick={async () => {
+                      setIsMenuOpen(false);
+                      await handleLogout();
+                    }}
+                    className="px-2 py-3 text-sm text-left text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                  >
+                    Sign out
+                  </button>
+                </>
               )}
             </div>
           </div>

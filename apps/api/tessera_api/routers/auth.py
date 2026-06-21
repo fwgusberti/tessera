@@ -1,17 +1,22 @@
-"""Authentication endpoints: register, login, refresh, logout."""
+"""Authentication endpoints: register, login, refresh, logout, change-password, reset-password."""
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
 from tessera_api.adapters.audit import write_audit
 from tessera_api.adapters.database import get_db
-from tessera_api.adapters.repo import SqlRefreshTokenRepository, SqlUserRepository
+from tessera_api.adapters.repo import (
+    SqlPasswordResetTokenRepository,
+    SqlRefreshTokenRepository,
+    SqlUserRepository,
+)
 from tessera_api.auth.jwt_auth import (
     create_access_token,
     create_refresh_token,
@@ -21,6 +26,7 @@ from tessera_api.auth.jwt_auth import (
     verify_access_token,
     verify_password,
 )
+from tessera_api.auth.password_strength import validate_password_strength
 from tessera_api.config import get_settings
 from tessera_core.domain.entities import RefreshToken, User
 
@@ -56,6 +62,23 @@ class RefreshRequest(BaseModel):
 
 class LogoutRequest(BaseModel):
     refresh_token: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_new_password: str
+    refresh_token: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+    confirm_new_password: str
 
 
 # ---------------------------------------------------------------------------
@@ -271,4 +294,235 @@ async def logout(
             action="auth.logout",
             entity_type="user",
             entity_id=user_id,
+        )
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/auth/change-password
+# ---------------------------------------------------------------------------
+
+@router.post("/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> dict:
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": {"code": "unauthorized", "message": "Authentication required"}},
+        )
+
+    try:
+        claims = verify_access_token(credentials.credentials)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": {"code": "invalid_token", "message": "Invalid access token"}},
+        ) from None
+
+    if body.new_password != body.confirm_new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "password_mismatch", "message": "Passwords do not match"}},
+        )
+
+    try:
+        validate_password_strength(body.new_password)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "password_too_weak", "message": str(exc)}},
+        ) from exc
+
+    user_id = uuid.UUID(claims["sub"])
+
+    async with get_db() as session:
+        user_repo = SqlUserRepository(session)
+        rt_repo = SqlRefreshTokenRepository(session)
+
+        user = await user_repo.get_by_id(user_id)
+        if user is None or not user.password_hash or not verify_password(body.current_password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": {"code": "invalid_credentials", "message": "Current password is incorrect"}},
+            )
+
+        from sqlalchemy import update as sa_update
+        from tessera_api.adapters.models import UserModel
+
+        await session.execute(
+            sa_update(UserModel)
+            .where(UserModel.id == user_id)
+            .values(password_hash=hash_password(body.new_password))
+        )
+
+        current_hash = hash_refresh_token(body.refresh_token)
+        await rt_repo.revoke_all_except(user_id=user_id, except_hash=current_hash)
+        await rt_repo.revoke(current_hash)
+
+        raw_refresh = create_refresh_token()
+        new_record = RefreshToken(
+            user_id=user_id,
+            token_hash=hash_refresh_token(raw_refresh),
+            expires_at=refresh_token_expires_at(),
+        )
+        await rt_repo.create(new_record)
+
+        await write_audit(
+            session,
+            actor_type="user",
+            actor_id=user_id,
+            action="auth.password.change",
+            entity_type="user",
+            entity_id=user_id,
+        )
+
+    settings = get_settings()
+    access_token = create_access_token(user_id, claims["email"], claims.get("is_admin", False))
+    return {
+        "access_token": access_token,
+        "refresh_token": raw_refresh,
+        "token_type": "bearer",
+        "expires_in": settings.jwt_access_token_expire_minutes * 60,
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/auth/forgot-password
+# ---------------------------------------------------------------------------
+
+_FORGOT_PASSWORD_RESPONSE = {
+    "message": "If that email is registered, you will receive a reset link shortly."
+}
+_RATE_LIMIT_MAX = 5
+_RATE_LIMIT_WINDOW = 900  # 15 minutes
+
+
+@router.post("/forgot-password")
+async def forgot_password(body: ForgotPasswordRequest, request: Request) -> dict:
+    from tessera_api.adapters.email import FastMailEmailAdapter
+    from tessera_api.auth.rate_limit import check_rate_limit
+    from tessera_core.services.password_reset import PasswordResetService
+
+    client_ip = (request.headers.get("x-forwarded-for") or request.client.host if request.client else "unknown")
+    rate_key = f"reset:{client_ip}"
+
+    import redis.asyncio as aioredis
+
+    settings = get_settings()
+    redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        within_limit = await check_rate_limit(redis_client, rate_key, _RATE_LIMIT_MAX, _RATE_LIMIT_WINDOW)
+    finally:
+        await redis_client.aclose()
+
+    if not within_limit:
+        return _FORGOT_PASSWORD_RESPONSE
+
+    async with get_db() as session:
+        user_repo = SqlUserRepository(session)
+        user = await user_repo.get_by_email(body.email.lower().strip())
+
+        if user is None:
+            hash_password("dummy_timing_equaliser")
+            await write_audit(
+                session,
+                actor_type="anonymous",
+                actor_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+                action="auth.password.reset_requested",
+                entity_type="user",
+                entity_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+                metadata={"email": body.email, "found": False},
+            )
+            return _FORGOT_PASSWORD_RESPONSE
+
+        prt_repo = SqlPasswordResetTokenRepository(session)
+        svc = PasswordResetService()
+        token_entity, raw_token = svc.create_token(user.id)
+        await prt_repo.create(token_entity)
+
+        reset_url = f"{settings.frontend_url}/reset-password?token={raw_token}"
+        email_adapter = FastMailEmailAdapter()
+        await email_adapter.send_password_reset(to=user.email, reset_url=reset_url, expires_in_minutes=60)
+
+        await write_audit(
+            session,
+            actor_type="anonymous",
+            actor_id=user.id,
+            action="auth.password.reset_requested",
+            entity_type="user",
+            entity_id=user.id,
+            metadata={"email": body.email},
+        )
+
+    return _FORGOT_PASSWORD_RESPONSE
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/auth/reset-password
+# ---------------------------------------------------------------------------
+
+@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_password(body: ResetPasswordRequest) -> None:
+    if body.new_password != body.confirm_new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "password_mismatch", "message": "Passwords do not match"}},
+        )
+
+    try:
+        validate_password_strength(body.new_password)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "password_too_weak", "message": str(exc)}},
+        ) from exc
+
+    _INVALID = HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"error": {"code": "invalid_or_expired_token", "message": "Reset link is invalid or has expired"}},
+    )
+
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+
+    from datetime import UTC, datetime
+
+    from tessera_api.adapters.models import PasswordResetTokenModel, UserModel
+    from tessera_core.services.password_reset import PasswordResetService
+
+    async with get_db() as session:
+        prt_repo = SqlPasswordResetTokenRepository(session)
+        token_entity = await prt_repo.get_by_hash(token_hash)
+
+        if token_entity is None:
+            raise _INVALID
+
+        svc = PasswordResetService()
+        if not svc.is_valid(token_entity):
+            raise _INVALID
+
+        from sqlalchemy import update as sa_update
+
+        await session.execute(
+            sa_update(PasswordResetTokenModel)
+            .where(PasswordResetTokenModel.token_hash == token_hash)
+            .values(consumed_at=datetime.now(UTC))
+        )
+
+        await session.execute(
+            sa_update(UserModel)
+            .where(UserModel.id == token_entity.user_id)
+            .values(password_hash=hash_password(body.new_password))
+        )
+
+        rt_repo = SqlRefreshTokenRepository(session)
+        await rt_repo.revoke_all_for_user(token_entity.user_id)
+
+        await write_audit(
+            session,
+            actor_type="anonymous",
+            actor_id=token_entity.user_id,
+            action="auth.password.reset_completed",
+            entity_type="user",
+            entity_id=token_entity.user_id,
         )

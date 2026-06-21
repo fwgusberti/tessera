@@ -19,6 +19,7 @@ from tessera_core.domain.entities import (
     JoinRequest,
     JoinRequestStatus,
     OnboardingProgress,
+    PasswordResetToken,
     RolePermission,
     SourceArtifact,
     Space,
@@ -281,3 +282,22 @@ class JoinRequestRepository(ABC):
 
     @abstractmethod
     async def cancel(self, request_id: UUID) -> None: ...
+
+
+class PasswordResetTokenRepository(ABC):
+    @abstractmethod
+    async def create(self, token: PasswordResetToken) -> PasswordResetToken: ...
+
+    @abstractmethod
+    async def get_by_hash(self, token_hash: str) -> PasswordResetToken | None: ...
+
+    @abstractmethod
+    async def consume_all_for_user(self, user_id: UUID) -> None: ...
+
+
+class RefreshTokenRepository(ABC):
+    @abstractmethod
+    async def revoke_all_except(self, user_id: UUID, except_hash: str) -> None: ...
+
+    @abstractmethod
+    async def revoke_all_for_user(self, user_id: UUID) -> None: ...

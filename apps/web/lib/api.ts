@@ -104,3 +104,38 @@ export async function authLogout(accessToken: string, refreshToken: string): Pro
 export async function authRegister(displayName: string, email: string, password: string): Promise<void> {
   await rawPost<unknown>("/v1/auth/register", { display_name: displayName, email, password });
 }
+
+export async function authChangePassword(params: {
+  currentPassword: string;
+  newPassword: string;
+  confirmNewPassword: string;
+  refreshToken: string;
+  accessToken: string;
+}): Promise<{ access_token: string; refresh_token: string; token_type: string; expires_in: number }> {
+  return rawPost(
+    "/v1/auth/change-password",
+    {
+      current_password: params.currentPassword,
+      new_password: params.newPassword,
+      confirm_new_password: params.confirmNewPassword,
+      refresh_token: params.refreshToken,
+    },
+    { Authorization: `Bearer ${params.accessToken}` },
+  );
+}
+
+export async function authForgotPassword(email: string): Promise<void> {
+  await rawPost<unknown>("/v1/auth/forgot-password", { email });
+}
+
+export async function authResetPassword(params: {
+  token: string;
+  newPassword: string;
+  confirmNewPassword: string;
+}): Promise<void> {
+  await rawPost<unknown>("/v1/auth/reset-password", {
+    token: params.token,
+    new_password: params.newPassword,
+    confirm_new_password: params.confirmNewPassword,
+  });
+}

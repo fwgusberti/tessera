@@ -50,3 +50,13 @@ class EmailPort(ABC):
         self, *, to: str, company_name: str, approved: bool, dashboard_url: str
     ) -> None:
         """Notify requester that their join request was approved or denied."""
+
+    @abstractmethod
+    async def send_password_reset(
+        self,
+        *,
+        to: str,
+        reset_url: str,
+        expires_in_minutes: int,
+    ) -> None:
+        """Send password reset link email."""
