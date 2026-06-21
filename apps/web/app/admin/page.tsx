@@ -115,19 +115,19 @@ export default function AdminPage() {
 
   return (
     <AuthGuard>
-    {loading ? <p className="text-gray-500">Loading admin panel…</p> : <div className="space-y-10">
+    {loading ? <p className="text-slate-500">Loading admin panel…</p> : <div className="space-y-10">
       <h1 className="text-2xl font-bold">Admin Panel</h1>
 
       {/* Metrics summary */}
       {metrics && (
         <div className="grid grid-cols-2 gap-4">
           <div className="bg-white rounded border p-4">
-            <p className="text-sm text-gray-500">Documents with Drift</p>
+            <p className="text-sm text-slate-500">Documents with Drift</p>
             <p className="text-3xl font-bold text-orange-600">{metrics.documents_with_drift}</p>
           </div>
           <div className="bg-white rounded border p-4">
-            <p className="text-sm text-gray-500">Total Queries</p>
-            <p className="text-3xl font-bold text-blue-600">{metrics.total_queries}</p>
+            <p className="text-sm text-slate-500">Total Queries</p>
+            <p className="text-3xl font-bold text-indigo-600">{metrics.total_queries}</p>
           </div>
         </div>
       )}
@@ -136,68 +136,70 @@ export default function AdminPage() {
       <section className="space-y-4">
         <h2 className="text-lg font-semibold">Spaces ({spaces.length})</h2>
         <div className="bg-white rounded border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="text-left px-4 py-2 font-medium text-gray-600">Name</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-600">Slug</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-600">Sector</th>
-              </tr>
-            </thead>
-            <tbody>
-              {spaces.map((space) => (
-                <tr key={space.id} className="border-b hover:bg-gray-50">
-                  <td className="px-4 py-2 font-medium">{space.name}</td>
-                  <td className="px-4 py-2 text-gray-500">{space.slug}</td>
-                  <td className="px-4 py-2 text-gray-500">{space.sector}</td>
-                </tr>
-              ))}
-              {spaces.length === 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 border-b">
                 <tr>
-                  <td colSpan={3} className="px-4 py-3 text-sm text-gray-400">No spaces yet.</td>
+                  <th className="text-left px-4 py-2 font-medium text-slate-600">Name</th>
+                  <th className="text-left px-4 py-2 font-medium text-slate-600">Slug</th>
+                  <th className="text-left px-4 py-2 font-medium text-slate-600">Sector</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {spaces.map((space) => (
+                  <tr key={space.id} className="border-b hover:bg-slate-50">
+                    <td className="px-4 py-2 font-medium">{space.name}</td>
+                    <td className="px-4 py-2 text-slate-500">{space.slug}</td>
+                    <td className="px-4 py-2 text-slate-500">{space.sector}</td>
+                  </tr>
+                ))}
+                {spaces.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-3 text-sm text-slate-400">No spaces yet.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Create Space form */}
         <div className="bg-white rounded border p-5">
-          <h3 className="font-semibold text-gray-800 mb-4">Create Space</h3>
+          <h3 className="font-semibold text-slate-800 mb-4">Create Space</h3>
           <form onSubmit={handleCreateSpace} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input
               type="text"
               placeholder="Slug (e.g. engineering)"
               value={spaceSlug}
               onChange={(e) => setSpaceSlug(e.target.value)}
-              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
             <input
               type="text"
               placeholder="Name (e.g. Engineering)"
               value={spaceName}
               onChange={(e) => setSpaceName(e.target.value)}
-              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
             <input
               type="text"
               placeholder="Sector (e.g. Technology)"
               value={spaceSector}
               onChange={(e) => setSpaceSector(e.target.value)}
-              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
             <input
               type="text"
               placeholder="Language (default: pt-BR)"
               value={spaceLang}
               onChange={(e) => setSpaceLang(e.target.value)}
-              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
             <div className="sm:col-span-2 flex items-center gap-3">
               <button
                 type="submit"
                 disabled={spaceSubmitting}
-                className="bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                className="bg-indigo-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
               >
                 {spaceSubmitting ? "Creating…" : "Create Space"}
               </button>
@@ -224,12 +226,12 @@ export default function AdminPage() {
               placeholder="IDP Group (e.g. engineering-team)"
               value={permGroup}
               onChange={(e) => setPermGroup(e.target.value)}
-              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
             <select
               value={permRole}
               onChange={(e) => setPermRole(e.target.value)}
-              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
             >
               <option value="viewer">Viewer</option>
               <option value="editor">Editor</option>
@@ -238,7 +240,7 @@ export default function AdminPage() {
             <select
               value={permConfidentiality}
               onChange={(e) => setPermConfidentiality(e.target.value)}
-              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
             >
               <option value="public">Public</option>
               <option value="internal">Internal</option>
@@ -248,7 +250,7 @@ export default function AdminPage() {
               <button
                 type="submit"
                 disabled={permSubmitting}
-                className="bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                className="bg-indigo-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
               >
                 {permSubmitting ? "Adding…" : "Add Permission"}
               </button>
@@ -332,7 +334,7 @@ function ConnectorsSection({ spaces }: { spaces: Space[] }) {
   return (
     <section className="space-y-4">
       <h2 className="text-lg font-semibold">Connectors</h2>
-      <p className="text-xs text-gray-400">Connectors created in previous sessions are not listed here.</p>
+      <p className="text-xs text-slate-400">Connectors created in previous sessions are not listed here.</p>
 
       <div className="bg-white rounded border p-5">
         <form onSubmit={handleCreateConnector} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -342,27 +344,27 @@ function ConnectorsSection({ spaces }: { spaces: Space[] }) {
             placeholder="Type (e.g. confluence)"
             value={connectorType}
             onChange={(e) => setConnectorType(e.target.value)}
-            className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
           <textarea
             placeholder='Config JSON (e.g. {"base_url": "https://..."})'
             value={connectorConfig}
             onChange={(e) => setConnectorConfig(e.target.value)}
             rows={3}
-            className="sm:col-span-2 border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="sm:col-span-2 border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
           <input
             type="text"
             placeholder="Schedule (cron, optional)"
             value={connectorSchedule}
             onChange={(e) => setConnectorSchedule(e.target.value)}
-            className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
           <div className="flex items-center gap-3">
             <button
               type="submit"
               disabled={connectorSubmitting}
-              className="bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              className="bg-indigo-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
             >
               {connectorSubmitting ? "Creating…" : "Create Connector"}
             </button>
@@ -373,35 +375,37 @@ function ConnectorsSection({ spaces }: { spaces: Space[] }) {
 
       {sessionConnectors.length > 0 && (
         <div className="bg-white rounded border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="text-left px-4 py-2 font-medium text-gray-600">Type</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-600">Schedule</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-600">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sessionConnectors.map((c) => (
-                <tr key={c.id} className="border-b">
-                  <td className="px-4 py-2 font-mono text-xs">{c.type}</td>
-                  <td className="px-4 py-2 text-gray-500">{c.schedule ?? "—"}</td>
-                  <td className="px-4 py-2">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleSync(c.id)}
-                        className="text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded"
-                      >
-                        Sync Now
-                      </button>
-                      {c.jobId && <span className="text-xs text-green-600 font-mono">Job: {c.jobId}</span>}
-                      {syncErrors[c.id] && <span className="text-xs text-red-600">{syncErrors[c.id]}</span>}
-                    </div>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 border-b">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium text-slate-600">Type</th>
+                  <th className="text-left px-4 py-2 font-medium text-slate-600">Schedule</th>
+                  <th className="text-left px-4 py-2 font-medium text-slate-600">Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sessionConnectors.map((c) => (
+                  <tr key={c.id} className="border-b">
+                    <td className="px-4 py-2 font-mono text-xs">{c.type}</td>
+                    <td className="px-4 py-2 text-slate-500">{c.schedule ?? "—"}</td>
+                    <td className="px-4 py-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={() => handleSync(c.id)}
+                          className="text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1 rounded"
+                        >
+                          Sync Now
+                        </button>
+                        {c.jobId && <span className="text-xs text-green-600 font-mono">Job: {c.jobId}</span>}
+                        {syncErrors[c.id] && <span className="text-xs text-red-600">{syncErrors[c.id]}</span>}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </section>
@@ -476,7 +480,7 @@ function AgentCredentialsSection({ spaces }: { spaces: Space[] }) {
   return (
     <section className="space-y-4">
       <h2 className="text-lg font-semibold">Agent Credentials</h2>
-      <p className="text-xs text-gray-400">Credentials created in previous sessions are not listed here.</p>
+      <p className="text-xs text-slate-400">Credentials created in previous sessions are not listed here.</p>
 
       <div className="bg-white rounded border p-5">
         <form onSubmit={handleCreateCredential} className="space-y-3">
@@ -485,11 +489,11 @@ function AgentCredentialsSection({ spaces }: { spaces: Space[] }) {
             placeholder="Credential name (e.g. CI Agent)"
             value={credName}
             onChange={(e) => setCredName(e.target.value)}
-            className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
           {spaces.length > 0 && (
             <div className="space-y-1">
-              <p className="text-xs font-medium text-gray-600">Scoped spaces (select at least one)</p>
+              <p className="text-xs font-medium text-slate-600">Scoped spaces (select at least one)</p>
               <div className="flex flex-wrap gap-2">
                 {spaces.map((s) => (
                   <label key={s.id} className="flex items-center gap-1 text-sm cursor-pointer">
@@ -508,7 +512,7 @@ function AgentCredentialsSection({ spaces }: { spaces: Space[] }) {
           <select
             value={credConfidentiality}
             onChange={(e) => setCredConfidentiality(e.target.value)}
-            className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
           >
             <option value="public">Public</option>
             <option value="internal">Internal</option>
@@ -518,7 +522,7 @@ function AgentCredentialsSection({ spaces }: { spaces: Space[] }) {
             <button
               type="submit"
               disabled={credSubmitting}
-              className="bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              className="bg-indigo-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
             >
               {credSubmitting ? "Creating…" : "Create Credential"}
             </button>
@@ -534,7 +538,7 @@ function AgentCredentialsSection({ spaces }: { spaces: Space[] }) {
               <div className="flex items-center justify-between">
                 <span className="font-medium text-sm">{c.name}</span>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400 capitalize">{c.max_confidentiality}</span>
+                  <span className="text-xs text-slate-400 capitalize">{c.max_confidentiality}</span>
                   {c.revoked_at ? (
                     <span className="text-xs text-red-500 font-medium">Revoked</span>
                   ) : (

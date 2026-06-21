@@ -15,7 +15,7 @@ export function SpaceSelector({ spaces, selectedId, onChange, disabled }: SpaceS
       value={selectedId ?? ""}
       onChange={(e) => onChange(e.target.value)}
       disabled={disabled}
-      className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:opacity-50"
+      className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white disabled:opacity-50"
     >
       <option value="">Select a space...</option>
       {spaces.map((s) => (

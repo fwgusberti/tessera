@@ -85,15 +85,15 @@ export default function CompanyPage() {
   if (view === "loading") {
     return (
       <div className="flex items-center justify-center py-8">
-        <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
     <div>
-      <h2 className="text-xl font-semibold text-gray-900 mb-1">Your Company</h2>
-      <p className="text-sm text-gray-500 mb-6">
+      <h2 className="text-xl font-semibold text-slate-900 mb-1">Your Company</h2>
+      <p className="text-sm text-slate-500 mb-6">
         {view === "suggestions"
           ? "We found some companies that match your email. Join one or create a new one."
           : "Create a new company workspace for your team."}
@@ -116,15 +116,15 @@ export default function CompanyPage() {
           />
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-200" />
+              <div className="w-full border-t border-slate-200" />
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="bg-white px-2 text-gray-400">or</span>
+              <span className="bg-white px-2 text-slate-400">or</span>
             </div>
           </div>
           <button
             onClick={() => setView("create")}
-            className="w-full border border-gray-300 text-gray-700 rounded px-4 py-2 text-sm font-medium hover:bg-gray-50"
+            className="w-full border border-slate-300 text-slate-700 rounded px-4 py-2 text-sm font-medium hover:bg-slate-50"
           >
             Create a new company
           </button>
@@ -137,7 +137,7 @@ export default function CompanyPage() {
           {suggestions && (suggestions.invitations.length > 0 || suggestions.domain_matches.length > 0) && (
             <button
               onClick={() => setView("suggestions")}
-              className="mt-3 w-full text-sm text-gray-500 hover:text-gray-700 underline"
+              className="mt-3 w-full text-sm text-slate-500 hover:text-slate-700 underline"
             >
               Back to suggestions
             </button>

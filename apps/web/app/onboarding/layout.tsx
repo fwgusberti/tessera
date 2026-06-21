@@ -20,14 +20,14 @@ export default function OnboardingLayout({ children }: { children: React.ReactNo
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-start pt-12 px-4">
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-start pt-12 px-4">
       <div className="w-full max-w-lg">
         <div className="mb-8 flex flex-col items-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Welcome to Tessera</h1>
-          <p className="text-gray-500 text-sm mb-6">Let&apos;s get you set up in just a few steps.</p>
+          <h1 className="text-2xl font-bold text-slate-900 mb-2">Welcome to Tessera</h1>
+          <p className="text-slate-500 text-sm mb-6">Let&apos;s get you set up in just a few steps.</p>
           <ProgressStepper currentStep={currentStep} completedSteps={completedSteps} />
         </div>
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-8">
+        <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 sm:p-8">
           {children}
         </div>
       </div>

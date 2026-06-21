@@ -22,18 +22,18 @@ function InvitationCard({
   const expiresDate = new Date(invitation.expires_at).toLocaleDateString();
 
   return (
-    <div className="border border-blue-200 bg-blue-50 rounded-lg p-4 flex items-center justify-between">
-      <div>
-        <p className="font-medium text-gray-900">{invitation.company_name}</p>
+    <div className="border border-indigo-200 bg-indigo-50 rounded-lg p-4 flex items-center justify-between">
+      <div className="min-w-0">
+        <p className="font-medium text-slate-900 truncate">{invitation.company_name}</p>
         {invitation.invited_by && (
-          <p className="text-sm text-gray-500">Invited by {invitation.invited_by}</p>
+          <p className="text-sm text-slate-500">Invited by {invitation.invited_by}</p>
         )}
-        <p className="text-xs text-gray-400 mt-1">Expires {expiresDate}</p>
+        <p className="text-xs text-slate-400 mt-1">Expires {expiresDate}</p>
       </div>
       <button
         onClick={onJoin}
         disabled={loading}
-        className="ml-4 bg-blue-600 text-white rounded px-3 py-1.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+        className="ml-4 bg-indigo-600 text-white rounded px-3 py-1.5 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 whitespace-nowrap"
       >
         Accept
       </button>
@@ -53,17 +53,17 @@ function DomainMatchCard({
   const isAutoJoin = match.policy === "auto_join";
 
   return (
-    <div className="border border-gray-200 bg-white rounded-lg p-4 flex items-center justify-between">
-      <div>
-        <p className="font-medium text-gray-900">{match.company_name}</p>
-        <p className="text-sm text-gray-500">
+    <div className="border border-slate-200 bg-white rounded-lg p-4 flex items-center justify-between">
+      <div className="min-w-0">
+        <p className="font-medium text-slate-900 truncate">{match.company_name}</p>
+        <p className="text-sm text-slate-500">
           {isAutoJoin ? "Join instantly via" : "Request access via"} @{match.domain}
         </p>
       </div>
       <button
         onClick={onJoin}
         disabled={loading}
-        className="ml-4 border border-gray-300 text-gray-700 rounded px-3 py-1.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap"
+        className="ml-4 border border-slate-300 text-slate-700 rounded px-3 py-1.5 text-sm font-medium hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap"
       >
         {isAutoJoin ? "Join" : "Request Access"}
       </button>

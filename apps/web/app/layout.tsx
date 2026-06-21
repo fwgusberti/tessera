@@ -22,7 +22,7 @@ export default function RootLayout({
       <body className={`${inter.className} antialiased`}>
         <AuthProvider>
           <OnboardingGuard>
-            <div className="min-h-screen bg-gray-50">
+            <div className="min-h-screen bg-slate-50">
               <NavBar />
               <main className="max-w-7xl mx-auto px-4 py-8">{children}</main>
             </div>

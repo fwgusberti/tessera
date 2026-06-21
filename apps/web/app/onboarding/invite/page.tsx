@@ -29,8 +29,8 @@ export default function InvitePage() {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold text-gray-900 mb-1">Invite Your Team</h2>
-      <p className="text-sm text-gray-500 mb-6">
+      <h2 className="text-xl font-semibold text-slate-900 mb-1">Invite Your Team</h2>
+      <p className="text-sm text-slate-500 mb-6">
         Send invitations to colleagues so they can join your company workspace.
       </p>
 
@@ -45,7 +45,7 @@ export default function InvitePage() {
       <div className="mt-6">
         <button
           onClick={() => router.push("/onboarding/complete")}
-          className="w-full text-sm text-gray-500 hover:text-gray-700 underline"
+          className="w-full text-sm text-slate-500 hover:text-slate-700 underline"
         >
           {done ? "Continue to completion →" : "Skip for now"}
         </button>

@@ -63,13 +63,13 @@ export default function SearchPage() {
       <div className="flex gap-2 mb-4">
         <button
           onClick={() => setMode("search")}
-          className={`px-4 py-2 rounded text-sm font-medium ${mode === "search" ? "bg-blue-600 text-white" : "bg-white border"}`}
+          className={`px-4 py-2 rounded text-sm font-medium ${mode === "search" ? "bg-indigo-600 text-white" : "bg-white border"}`}
         >
           Search
         </button>
         <button
           onClick={() => setMode("ask")}
-          className={`px-4 py-2 rounded text-sm font-medium ${mode === "ask" ? "bg-blue-600 text-white" : "bg-white border"}`}
+          className={`px-4 py-2 rounded text-sm font-medium ${mode === "ask" ? "bg-indigo-600 text-white" : "bg-white border"}`}
         >
           Ask Assistant
         </button>
@@ -82,12 +82,12 @@ export default function SearchPage() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSearch()}
           placeholder={mode === "search" ? "Search documentation..." : "Ask a question..."}
-          className="flex-1 border rounded px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="flex-1 border rounded px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
         />
         <button
           onClick={handleSearch}
           disabled={loading}
-          className="bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium disabled:opacity-50"
+          className="bg-indigo-600 text-white px-4 py-2 rounded text-sm font-medium disabled:opacity-50"
         >
           {loading ? "..." : mode === "search" ? "Search" : "Ask"}
         </button>
@@ -96,7 +96,7 @@ export default function SearchPage() {
       {answer && (
         <div className="bg-white rounded border p-4 space-y-3">
           {answer.dont_know ? (
-            <div className="text-gray-500 italic">
+            <div className="text-slate-500 italic">
               <p>I don&apos;t have enough information to answer this question.</p>
               {answer.suggested_owner && (
                 <p className="mt-1 text-sm">
@@ -110,13 +110,13 @@ export default function SearchPage() {
               <div className="prose prose-sm max-w-none">{answer.answer}</div>
               {answer.citations && answer.citations.length > 0 && (
                 <div className="border-t pt-3 space-y-2">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
                     Sources
                   </p>
                   {answer.citations.map((c, i) => (
                     <button
                       key={c.chunk_id}
-                      className="block w-full text-left text-xs bg-gray-50 rounded p-2 hover:bg-gray-100"
+                      className="block w-full text-left text-xs bg-slate-50 rounded p-2 hover:bg-slate-100"
                       title={`Score: ${c.score.toFixed(2)}`}
                     >
                       [{i + 1}] {c.quote}
@@ -126,12 +126,12 @@ export default function SearchPage() {
               )}
             </>
           )}
-          <p className="text-xs text-gray-400">Confidence: {(answer.confidence * 100).toFixed(0)}%</p>
+          <p className="text-xs text-slate-400">Confidence: {(answer.confidence * 100).toFixed(0)}%</p>
         </div>
       )}
 
       {searched && !loading && mode === "search" && results.length === 0 && !answer && (
-        <p className="text-sm text-gray-500 text-center py-4">No results found.</p>
+        <p className="text-sm text-slate-500 text-center py-4">No results found.</p>
       )}
 
       {results.length > 0 && (
@@ -139,13 +139,13 @@ export default function SearchPage() {
           {results.map((r) => (
             <div key={r.chunk_id} className="bg-white rounded border p-4">
               <div className="flex justify-between items-start mb-2">
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-slate-400">
                   Score: {(r.score * 100).toFixed(0)}%
                 </span>
               </div>
-              <p className="text-sm text-gray-700">{r.snippet}</p>
+              <p className="text-sm text-slate-700">{r.snippet}</p>
               {r.citation.document_title && (
-                <p className="text-xs text-blue-600 mt-2">{r.citation.document_title}</p>
+                <p className="text-xs text-indigo-600 mt-2">{r.citation.document_title}</p>
               )}
             </div>
           ))}

@@ -47,7 +47,7 @@ export function CompanyForm({ onSubmit, loading = false }: CompanyFormProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label htmlFor="companyName" className="block text-sm font-medium text-gray-700 mb-1">
+        <label htmlFor="companyName" className="block text-sm font-medium text-slate-700 mb-1">
           Company Name <span className="text-red-500">*</span>
         </label>
         <input
@@ -58,19 +58,19 @@ export function CompanyForm({ onSubmit, loading = false }: CompanyFormProps) {
           placeholder="Acme Corp"
           maxLength={255}
           required
-          className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
         />
       </div>
 
       <div>
-        <label htmlFor="industry" className="block text-sm font-medium text-gray-700 mb-1">
-          Industry <span className="text-gray-400 font-normal">(optional)</span>
+        <label htmlFor="industry" className="block text-sm font-medium text-slate-700 mb-1">
+          Industry <span className="text-slate-400 font-normal">(optional)</span>
         </label>
         <select
           id="industry"
           value={industry}
           onChange={(e) => setIndustry(e.target.value)}
-          className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
         >
           <option value="">Select industry…</option>
           {INDUSTRIES.map((i) => (
@@ -82,14 +82,14 @@ export function CompanyForm({ onSubmit, loading = false }: CompanyFormProps) {
       </div>
 
       <div>
-        <label htmlFor="teamSize" className="block text-sm font-medium text-gray-700 mb-1">
-          Team Size <span className="text-gray-400 font-normal">(optional)</span>
+        <label htmlFor="teamSize" className="block text-sm font-medium text-slate-700 mb-1">
+          Team Size <span className="text-slate-400 font-normal">(optional)</span>
         </label>
         <select
           id="teamSize"
           value={teamSize}
           onChange={(e) => setTeamSize(e.target.value)}
-          className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
         >
           <option value="">Select team size…</option>
           {TEAM_SIZES.map((s) => (
@@ -109,7 +109,7 @@ export function CompanyForm({ onSubmit, loading = false }: CompanyFormProps) {
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-blue-600 text-white rounded px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+        className="w-full bg-indigo-600 text-white rounded px-4 py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
       >
         {loading ? "Creating…" : "Create Company"}
       </button>

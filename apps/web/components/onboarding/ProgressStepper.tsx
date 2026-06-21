@@ -33,10 +33,10 @@ export function ProgressStepper({ currentStep, completedSteps }: ProgressStepper
                   className={[
                     "w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium",
                     isCompleted
-                      ? "bg-blue-600 text-white"
+                      ? "bg-indigo-600 text-white"
                       : isCurrent
-                        ? "bg-blue-100 text-blue-700 border-2 border-blue-600"
-                        : "bg-gray-100 text-gray-400",
+                        ? "bg-indigo-100 text-indigo-700 border-2 border-indigo-600"
+                        : "bg-slate-100 text-slate-400",
                   ].join(" ")}
                   aria-current={isCurrent ? "step" : undefined}
                 >
@@ -54,8 +54,8 @@ export function ProgressStepper({ currentStep, completedSteps }: ProgressStepper
                 </div>
                 <span
                   className={[
-                    "mt-1 text-xs",
-                    isCurrent ? "text-blue-700 font-medium" : isPending ? "text-gray-400" : "text-blue-600",
+                    "mt-1 text-[10px] sm:text-xs",
+                    isCurrent ? "text-indigo-700 font-medium" : isPending ? "text-slate-400" : "text-indigo-600",
                   ].join(" ")}
                 >
                   {step.label}
@@ -64,8 +64,8 @@ export function ProgressStepper({ currentStep, completedSteps }: ProgressStepper
               {index < STEPS.length - 1 && (
                 <div
                   className={[
-                    "w-12 h-0.5 mx-2 mb-5",
-                    isCompleted ? "bg-blue-600" : "bg-gray-200",
+                    "w-6 sm:w-12 h-0.5 mx-1 sm:mx-2 mb-5",
+                    isCompleted ? "bg-indigo-600" : "bg-slate-200",
                   ].join(" ")}
                   aria-hidden
                 />

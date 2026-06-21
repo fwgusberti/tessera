@@ -71,13 +71,13 @@ export default function PendingPage() {
               />
             </svg>
           </div>
-          <h2 className="text-xl font-semibold text-gray-900">Request Not Approved</h2>
-          <p className="text-gray-500">
+          <h2 className="text-xl font-semibold text-slate-900">Request Not Approved</h2>
+          <p className="text-slate-500">
             Your request to join{companyName ? ` ${companyName}` : ""} was not approved.
           </p>
           <button
             onClick={() => router.push("/onboarding/company")}
-            className="w-full bg-blue-600 text-white rounded px-4 py-2 text-sm font-medium hover:bg-blue-700"
+            className="w-full bg-indigo-600 text-white rounded px-4 py-2 text-sm font-medium hover:bg-indigo-700"
           >
             Try Another Company
           </button>
@@ -87,8 +87,8 @@ export default function PendingPage() {
           <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto">
             <div className="w-6 h-6 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
           </div>
-          <h2 className="text-xl font-semibold text-gray-900">Pending Approval</h2>
-          <p className="text-gray-500">
+          <h2 className="text-xl font-semibold text-slate-900">Pending Approval</h2>
+          <p className="text-slate-500">
             Your request to join{companyName ? ` ${companyName}` : ""} is waiting for an admin to review it.
             We&apos;ll notify you by email once a decision is made.
           </p>
@@ -102,7 +102,7 @@ export default function PendingPage() {
           <button
             onClick={handleCancel}
             disabled={cancelling}
-            className="w-full border border-gray-300 text-gray-700 rounded px-4 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+            className="w-full border border-slate-300 text-slate-700 rounded px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
           >
             {cancelling ? "Cancelling…" : "Cancel Request"}
           </button>

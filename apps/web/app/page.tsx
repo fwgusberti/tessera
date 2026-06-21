@@ -13,8 +13,8 @@ interface StatCardProps {
 function StatCard({ label, value }: StatCardProps) {
   return (
     <div className="bg-white rounded border p-5">
-      <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">{label}</p>
-      <p className="text-3xl font-bold text-gray-900">{value}</p>
+      <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">{label}</p>
+      <p className="text-3xl font-bold text-slate-900">{value}</p>
     </div>
   );
 }
@@ -29,10 +29,10 @@ function NavCard({ href, title, description }: NavCardProps) {
   return (
     <a
       href={href}
-      className="block bg-white rounded border p-5 hover:border-blue-400 hover:shadow-sm transition-all"
+      className="block bg-white rounded border p-5 hover:border-indigo-400 hover:shadow-sm transition-all"
     >
-      <p className="font-semibold text-gray-900 mb-1">{title}</p>
-      <p className="text-sm text-gray-500">{description}</p>
+      <p className="font-semibold text-slate-900 mb-1">{title}</p>
+      <p className="text-sm text-slate-500">{description}</p>
     </a>
   );
 }
@@ -67,8 +67,8 @@ export default function Home() {
     <AuthGuard>
       <div className="space-y-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Tessera</h1>
-          <p className="text-gray-500 mt-1">Living Documentation Platform</p>
+          <h1 className="text-2xl font-bold text-slate-900">Tessera</h1>
+          <p className="text-slate-500 mt-1">Living Documentation Platform</p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -88,7 +88,7 @@ export default function Home() {
         </div>
 
         <div>
-          <h2 className="text-lg font-semibold text-gray-800 mb-3">Quick Navigation</h2>
+          <h2 className="text-lg font-semibold text-slate-800 mb-3">Quick Navigation</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <NavCard href="/search" title="Search" description="Semantic search and AI assistant across your documentation" />
             <NavCard href="/proposals" title="Proposals" description="Review and approve pending document update proposals" />

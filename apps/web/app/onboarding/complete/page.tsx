@@ -47,15 +47,15 @@ export default function CompletePage() {
 
       {isJoiner ? (
         <>
-          <h2 className="text-2xl font-bold text-gray-900">You&apos;re all set!</h2>
-          <p className="text-gray-500">
+          <h2 className="text-2xl font-bold text-slate-900">You&apos;re all set!</h2>
+          <p className="text-slate-500">
             You&apos;ve successfully joined your company on Tessera. Welcome aboard!
           </p>
         </>
       ) : (
         <>
-          <h2 className="text-2xl font-bold text-gray-900">Your workspace is ready!</h2>
-          <p className="text-gray-500">
+          <h2 className="text-2xl font-bold text-slate-900">Your workspace is ready!</h2>
+          <p className="text-slate-500">
             You&apos;ve set up your profile and company. Team members you invited will receive email invitations.
           </p>
         </>
@@ -64,7 +64,7 @@ export default function CompletePage() {
       <button
         onClick={handleGoToDashboard}
         disabled={completing}
-        className="w-full bg-blue-600 text-white rounded px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+        className="w-full bg-indigo-600 text-white rounded px-4 py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
       >
         {completing ? "Setting up…" : "Go to Dashboard"}
       </button>

@@ -84,7 +84,7 @@ export function AddDocumentModal({ open, spaces, onClose, onCreated }: AddDocume
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-6 py-4 border-b">
-          <h2 id="add-doc-title" className="text-lg font-semibold text-gray-900">Add Document</h2>
+          <h2 id="add-doc-title" className="text-lg font-semibold text-slate-900">Add Document</h2>
         </div>
 
         <form onSubmit={handleSubmit} className="px-6 py-4 space-y-4">
@@ -95,7 +95,7 @@ export function AddDocumentModal({ open, spaces, onClose, onCreated }: AddDocume
           )}
 
           <div>
-            <label htmlFor="doc-title" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="doc-title" className="block text-sm font-medium text-slate-700 mb-1">
               Title
             </label>
             <input
@@ -104,24 +104,24 @@ export function AddDocumentModal({ open, spaces, onClose, onCreated }: AddDocume
               autoFocus
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               placeholder="Document title"
             />
             {errors.title && <p className="text-red-600 text-xs mt-1">{errors.title}</p>}
           </div>
 
           <div>
-            <label htmlFor="doc-space" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="doc-space" className="block text-sm font-medium text-slate-700 mb-1">
               Space
             </label>
             {spaces.length === 0 ? (
-              <p className="text-sm text-gray-500 italic">No spaces available — create a space first.</p>
+              <p className="text-sm text-slate-500 italic">No spaces available — create a space first.</p>
             ) : (
               <select
                 id="doc-space"
                 value={spaceId}
                 onChange={(e) => setSpaceId(e.target.value)}
-                className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 <option value="">Select a space…</option>
                 {spaces.map((s) => (
@@ -132,16 +132,16 @@ export function AddDocumentModal({ open, spaces, onClose, onCreated }: AddDocume
             {errors.spaceId && <p className="text-red-600 text-xs mt-1">{errors.spaceId}</p>}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label htmlFor="doc-language" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="doc-language" className="block text-sm font-medium text-slate-700 mb-1">
                 Language
               </label>
               <select
                 id="doc-language"
                 value={language}
                 onChange={(e) => setLanguage(e.target.value)}
-                className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 <option value="pt-BR">pt-BR</option>
                 <option value="en">en</option>
@@ -149,14 +149,14 @@ export function AddDocumentModal({ open, spaces, onClose, onCreated }: AddDocume
             </div>
 
             <div>
-              <label htmlFor="doc-confidentiality" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="doc-confidentiality" className="block text-sm font-medium text-slate-700 mb-1">
                 Confidentiality
               </label>
               <select
                 id="doc-confidentiality"
                 value={confidentiality}
                 onChange={(e) => setConfidentiality(e.target.value as typeof confidentiality)}
-                className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 <option value="internal">Internal</option>
                 <option value="restricted">Restricted</option>
@@ -166,7 +166,7 @@ export function AddDocumentModal({ open, spaces, onClose, onCreated }: AddDocume
           </div>
 
           <div>
-            <label htmlFor="doc-content" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="doc-content" className="block text-sm font-medium text-slate-700 mb-1">
               Content (Markdown)
             </label>
             <textarea
@@ -174,7 +174,7 @@ export function AddDocumentModal({ open, spaces, onClose, onCreated }: AddDocume
               value={contentMarkdown}
               onChange={(e) => setContentMarkdown(e.target.value)}
               rows={6}
-              className="w-full border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+              className="w-full border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y"
               placeholder="# Title&#10;&#10;Content here…"
             />
           </div>
@@ -183,14 +183,14 @@ export function AddDocumentModal({ open, spaces, onClose, onCreated }: AddDocume
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-700 border rounded hover:bg-gray-50"
+              className="px-4 py-2 text-sm font-medium text-slate-700 border rounded hover:bg-slate-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting || spaces.length === 0}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700 disabled:opacity-50"
             >
               {submitting ? "Saving…" : "Save"}
             </button>

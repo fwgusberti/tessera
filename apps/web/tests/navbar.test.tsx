@@ -66,4 +66,54 @@ describe("NavBar", () => {
       expect(mockReplace).toHaveBeenCalledWith("/login");
     });
   });
+
+  it("hamburger button is visible and has accessible label", () => {
+    render(<NavBar />);
+    const hamburger = screen.getByRole("button", { name: /open menu/i });
+    expect(hamburger).toBeInTheDocument();
+    expect(hamburger.className).toContain("min-h-[44px]");
+    expect(hamburger.className).toContain("min-w-[44px]");
+  });
+
+  it("desktop link row has hidden md:flex classes", () => {
+    const { container } = render(<NavBar />);
+    const desktopNav = container.querySelector(".hidden.md\\:flex");
+    expect(desktopNav).toBeInTheDocument();
+  });
+
+  it("mobile menu opens when hamburger is clicked", () => {
+    render(<NavBar />);
+    const hamburger = screen.getByRole("button", { name: /open menu/i });
+    expect(hamburger.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(hamburger);
+
+    expect(hamburger.getAttribute("aria-expanded")).toBe("true");
+    // Mobile menu links appear (there are now two sets of nav links — desktop hidden + mobile visible)
+    const searchLinks = screen.getAllByRole("link", { name: /search/i });
+    expect(searchLinks.length).toBeGreaterThan(1);
+  });
+
+  it("mobile menu closes when a nav link is clicked", () => {
+    render(<NavBar />);
+    const hamburger = screen.getByRole("button", { name: /open menu/i });
+    fireEvent.click(hamburger);
+
+    // Find and click a mobile menu link
+    const searchLinks = screen.getAllByRole("link", { name: /search/i });
+    fireEvent.click(searchLinks[searchLinks.length - 1]);
+
+    expect(hamburger.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("mobile menu closes when Escape key is pressed", () => {
+    render(<NavBar />);
+    const hamburger = screen.getByRole("button", { name: /open menu/i });
+    fireEvent.click(hamburger);
+    expect(hamburger.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(hamburger.getAttribute("aria-expanded")).toBe("false");
+  });
 });

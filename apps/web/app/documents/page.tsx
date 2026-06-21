@@ -10,7 +10,7 @@ import { AddDocumentModal } from "@/components/documents/AddDocumentModal";
 const STATE_STYLES: Record<string, string> = {
   ingested: "bg-yellow-100 text-yellow-800",
   published: "bg-green-100 text-green-800",
-  archived: "bg-gray-100 text-gray-600",
+  archived: "bg-slate-100 text-slate-600",
 };
 
 export default function DocumentsPage() {
@@ -50,10 +50,10 @@ export default function DocumentsPage() {
     <AuthGuard>
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Documents</h1>
+        <h1 className="text-2xl font-bold text-slate-900">Documents</h1>
         <button
           onClick={() => setShowModal(true)}
-          className="bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700"
+          className="bg-indigo-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-indigo-700"
         >
           Add Document
         </button>
@@ -67,7 +67,7 @@ export default function DocumentsPage() {
 
       <div className="flex items-center gap-3">
         {loadingSpaces ? (
-          <p className="text-sm text-gray-500">Loading spaces…</p>
+          <p className="text-sm text-slate-500">Loading spaces…</p>
         ) : spacesError ? (
           <p className="text-sm text-red-600">{spacesError}</p>
         ) : (
@@ -83,45 +83,47 @@ export default function DocumentsPage() {
       </div>
 
       {!selectedSpaceId && !loadingSpaces && (
-        <p className="text-sm text-gray-500">Select a space to see its documents.</p>
+        <p className="text-sm text-slate-500">Select a space to see its documents.</p>
       )}
 
-      {loadingDocs && <p className="text-sm text-gray-500">Loading documents…</p>}
+      {loadingDocs && <p className="text-sm text-slate-500">Loading documents…</p>}
 
       {docsError && <p className="text-sm text-red-600">{docsError}</p>}
 
       {selectedSpaceId && !loadingDocs && !docsError && documents.length === 0 && (
-        <p className="text-sm text-gray-500">No documents in this space.</p>
+        <p className="text-sm text-slate-500">No documents in this space.</p>
       )}
 
       {documents.length > 0 && (
         <div className="bg-white rounded border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="text-left px-4 py-2 font-medium text-gray-600">Title</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-600">State</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-600">Confidentiality</th>
-              </tr>
-            </thead>
-            <tbody>
-              {documents.map((doc) => (
-                <tr key={doc.id} className="border-b hover:bg-gray-50">
-                  <td className="px-4 py-2">
-                    <a href={`/documents/${doc.id}`} className="font-medium text-blue-600 hover:underline">
-                      {doc.title}
-                    </a>
-                  </td>
-                  <td className="px-4 py-2">
-                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${STATE_STYLES[doc.state] ?? "bg-gray-100 text-gray-600"}`}>
-                      {doc.state}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-gray-500 capitalize">{doc.confidentiality}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 border-b">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium text-slate-600">Title</th>
+                  <th className="text-left px-4 py-2 font-medium text-slate-600">State</th>
+                  <th className="text-left px-4 py-2 font-medium text-slate-600 hidden md:table-cell">Confidentiality</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {documents.map((doc) => (
+                  <tr key={doc.id} className="border-b hover:bg-slate-50">
+                    <td className="px-4 py-2">
+                      <a href={`/documents/${doc.id}`} className="font-medium text-indigo-600 hover:underline">
+                        {doc.title}
+                      </a>
+                    </td>
+                    <td className="px-4 py-2">
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${STATE_STYLES[doc.state] ?? "bg-slate-100 text-slate-600"}`}>
+                        {doc.state}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-slate-500 capitalize hidden md:table-cell">{doc.confidentiality}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

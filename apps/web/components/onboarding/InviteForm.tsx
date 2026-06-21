@@ -103,19 +103,19 @@ export function InviteForm({ onSubmit, loading = false }: InviteFormProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-medium text-slate-700 mb-1">
           Email addresses
         </label>
         <div
-          className={`flex flex-wrap gap-1.5 items-center border rounded px-3 py-2 min-h-[2.5rem] focus-within:ring-2 focus-within:ring-blue-500 ${
-            fieldError ? "border-red-400" : "border-gray-300"
+          className={`flex flex-wrap gap-1.5 items-center border rounded px-3 py-2 min-h-[2.5rem] focus-within:ring-2 focus-within:ring-indigo-500 ${
+            fieldError ? "border-red-400" : "border-slate-300"
           }`}
           onClick={() => (document.getElementById("invite-input") as HTMLInputElement | null)?.focus()}
         >
           {tags.map((email) => (
             <span
               key={email}
-              className="inline-flex items-center gap-1 bg-blue-100 text-blue-800 text-xs font-medium px-2 py-0.5 rounded-full"
+              className="inline-flex items-center gap-1 bg-indigo-100 text-indigo-800 text-xs font-medium px-2 py-0.5 rounded-full"
             >
               {email}
               <button
@@ -124,7 +124,7 @@ export function InviteForm({ onSubmit, loading = false }: InviteFormProps) {
                   e.stopPropagation();
                   removeTag(email);
                 }}
-                className="text-blue-500 hover:text-blue-700 leading-none"
+                className="text-indigo-500 hover:text-indigo-700 leading-none"
                 aria-label={`Remove ${email}`}
               >
                 ×
@@ -142,7 +142,7 @@ export function InviteForm({ onSubmit, loading = false }: InviteFormProps) {
             className="flex-1 min-w-[180px] text-sm outline-none bg-transparent"
           />
         </div>
-        <p className="text-xs text-gray-400 mt-1">Press Enter or comma to add each address.</p>
+        <p className="text-xs text-slate-400 mt-1">Press Enter or comma to add each address.</p>
         {fieldError && (
           <p className="text-xs text-red-600 mt-1">{fieldError}</p>
         )}
@@ -151,7 +151,7 @@ export function InviteForm({ onSubmit, loading = false }: InviteFormProps) {
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-blue-600 text-white rounded px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+        className="w-full bg-indigo-600 text-white rounded px-4 py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
       >
         {loading ? "Sending…" : "Send Invitations"}
       </button>

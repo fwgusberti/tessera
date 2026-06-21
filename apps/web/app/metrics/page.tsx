@@ -16,8 +16,8 @@ interface Metrics {
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="bg-white rounded border p-4">
-      <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">{label}</p>
-      <p className="text-2xl font-bold text-gray-900">{value}</p>
+      <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">{label}</p>
+      <p className="text-2xl font-bold text-slate-900">{value}</p>
     </div>
   );
 }
@@ -39,7 +39,7 @@ export default function MetricsPage() {
   return (
     <AuthGuard>
       {loading ? (
-        <p className="text-gray-500">Loading metrics...</p>
+        <p className="text-slate-500">Loading metrics...</p>
       ) : !metrics ? (
         <p className="text-red-500">Failed to load metrics.</p>
       ) : (
