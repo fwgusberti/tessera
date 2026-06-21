@@ -9,6 +9,10 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
+vi.mock("@/lib/chat", () => ({
+  askAssistant: vi.fn(),
+}));
+
 vi.mock("@/lib/auth", () => ({
   useAuth: () => ({ status: "authenticated", user: { id: "u1", email: "t@t.com", isAdmin: false }, accessToken: "tok" }),
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -77,5 +81,14 @@ describe("Home dashboard", () => {
     await waitFor(() => {
       expect(screen.queryByText(/deploy now/i)).not.toBeInTheDocument();
     });
+  });
+
+  it("renders the chat interface as the primary content element", async () => {
+    mockApi.get.mockResolvedValue({ spaces: [], total_queries: 0, documents_with_drift: 0 });
+
+    render(<Home />);
+
+    expect(screen.getByRole("textbox")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /ask/i })).toBeInTheDocument();
   });
 });

@@ -50,6 +50,7 @@ async def generate_answer(
     confidence_threshold: float,
     llm_provider,
     session,
+    history: list[dict[str, str]] | None = None,
 ) -> AssistantResponse | DontKnowResponse:
     """Generate a grounded answer with citations, or return dont_know if confidence is low."""
     from tessera_api.rag.citations import build_citation
@@ -63,7 +64,7 @@ async def generate_answer(
         suggested_owner = await _get_suggested_owner(space_ids, session)
         return DontKnowResponse(confidence=best_score, suggested_owner=suggested_owner)
 
-    context_parts = [f"[{i+1}] {c['text']}" for i, c in enumerate(chunks)]
+    context_parts = [f"[{i + 1}] {c['text']}" for i, c in enumerate(chunks)]
     context = "\n\n".join(context_parts)
 
     system_prompt = (
@@ -73,12 +74,12 @@ async def generate_answer(
         "Cite sources using [1], [2], etc. notation."
     )
 
-    messages = [
-        {
-            "role": "user",
-            "content": f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer based only on the context above:",
-        }
-    ]
+    prior_turns: list[dict[str, str]] = list(history) if history else []
+    current_message = {
+        "role": "user",
+        "content": f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer based only on the context above:",
+    }
+    messages = [*prior_turns, current_message]
 
     answer_text = await llm_provider.complete(messages=messages, system=system_prompt)
     citations = [build_citation(c) for c in chunks[:5]]

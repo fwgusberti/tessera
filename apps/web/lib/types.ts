@@ -92,3 +92,33 @@ export interface RegisterCredentials {
 }
 
 export type PasswordStrength = "weak" | "medium" | "strong";
+
+// ─── Chat / Assistant ─────────────────────────────────────────────────────────
+
+export interface Citation {
+  chunk_id: string;
+  document_version_id: string;
+  quote: string;
+  score: number;
+}
+
+export interface AnswerResponse {
+  answer: string | null;
+  citations?: Citation[];
+  confidence: number;
+  dont_know?: boolean;
+  suggested_owner?: { space_name: string };
+}
+
+export interface HistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatTurn {
+  id: string;
+  question: string;
+  answer: AnswerResponse | null;
+  status: "pending" | "complete" | "error";
+  errorMessage?: string;
+}

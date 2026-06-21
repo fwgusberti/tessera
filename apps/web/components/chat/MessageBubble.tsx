@@ -1,0 +1,51 @@
+"use client";
+
+import type { ChatTurn } from "@/lib/types";
+
+interface MessageBubbleProps {
+  turn: ChatTurn;
+}
+
+export default function MessageBubble({ turn }: MessageBubbleProps) {
+  return (
+    <div className="flex flex-col gap-2">
+      {/* User question */}
+      <div className="flex justify-end">
+        <div className="max-w-[85%] bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm">
+          <p>{turn.question}</p>
+        </div>
+      </div>
+
+      {/* Assistant response */}
+      <div className="flex justify-start">
+        <div className="max-w-[85%] bg-slate-100 text-slate-900 rounded-lg px-4 py-2 text-sm">
+          {turn.status === "pending" && (
+            <span role="status" aria-label="Loading" className="flex items-center gap-2 text-slate-500">
+              <span className="animate-spin inline-block w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full" />
+              Thinking…
+            </span>
+          )}
+
+          {turn.status === "error" && (
+            <p className="text-red-600">{turn.errorMessage ?? "Something went wrong. Please try again."}</p>
+          )}
+
+          {turn.status === "complete" && turn.answer && (
+            <>
+              {turn.answer.dont_know ? (
+                <p className="text-slate-500 italic">
+                  I don&apos;t have enough information to answer that.
+                  {turn.answer.suggested_owner && (
+                    <> Try checking the <strong>{turn.answer.suggested_owner.space_name}</strong> space.</>
+                  )}
+                </p>
+              ) : (
+                <p className="whitespace-pre-wrap">{turn.answer.answer}</p>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

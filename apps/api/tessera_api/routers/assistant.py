@@ -2,18 +2,32 @@
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 router = APIRouter(tags=["assistant"])
+
+
+class ChatHistoryMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("content must not be empty")
+        return v
 
 
 class AnswerRequest(BaseModel):
     query: str
     space_ids: list[UUID] | None = None
     language: str | None = None
+    history: list[ChatHistoryMessage] | None = None
 
 
 @router.post("/assistant/answer")
@@ -58,6 +72,7 @@ async def answer(body: AnswerRequest, request: Request) -> dict:
         )
 
         llm = AnthropicLLMProvider()
+        history = [{"role": m.role, "content": m.content} for m in (body.history or [])]
         response = await generate_answer(
             query=body.query,
             chunks=raw_results,
@@ -65,6 +80,7 @@ async def answer(body: AnswerRequest, request: Request) -> dict:
             confidence_threshold=confidence_threshold,
             llm_provider=llm,
             session=session,
+            history=history or None,
         )
 
         await write_audit(

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { Metrics, Space } from "@/lib/types";
 import { AuthGuard } from "@/lib/auth-guard";
+import ChatInterface from "@/components/chat/ChatInterface";
 
 interface StatCardProps {
   label: string;
@@ -71,6 +72,12 @@ export default function Home() {
           <p className="text-slate-500 mt-1">Living Documentation Platform</p>
         </div>
 
+        {/* Primary: chat interface */}
+        <div className="bg-white rounded border p-5">
+          <ChatInterface />
+        </div>
+
+        {/* Secondary: stats + nav (below the fold) */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {loading ? (
             <>
