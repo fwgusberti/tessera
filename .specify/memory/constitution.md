@@ -1,40 +1,37 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.1.0 → 1.2.0
-Rationale: MINOR bump. Removes the Cassandra mandate from Technical Stack Boundaries
-and consolidates persistent storage onto PostgreSQL (relational + non-relational via
-JSONB and extensions such as pgvector). Classified MINOR, not MAJOR: this relaxes a
-supporting stack rule (not a Core Principle I–V) and is backward-compatible for all
-downstream artifacts — it only widens what is permitted. (A stricter reading of
-"removals = MAJOR" would make this 2.0.0; chosen MINOR for consistency with the
-v1.1.0 Redis relaxation and because no Core Principle is removed.)
+Version change: 1.2.0 → 1.3.0
+Rationale: MINOR bump. Adds a new "UI Design System" section establishing the
+canonical color palette (Slate + Indigo) and font stack (Geist/Inter). No Core
+Principle is modified or removed; this only adds new mandatory UI guidance for
+the frontend layer.
 
-Prior amendment (v1.1.0): expanded the caching rule to permit Redis/other brokers as
-ephemeral task-queue transport (caches/brokers still MUST NOT be a system of record).
+Prior amendment (v1.2.0): consolidated persistent storage onto PostgreSQL,
+removing the Cassandra mandate.
+
+Prior amendment (v1.1.0): expanded the caching rule to permit Redis/other
+brokers as ephemeral task-queue transport.
 
 Modified sections:
-- "Technical Stack Boundaries": removed the "Non-relational storage: Cassandra"
-  bullet; "Relational storage" → "Persistent storage" (PostgreSQL as the single
-  system of record for relational and non-relational data). Caching bullet's
-  durable-state reference updated to drop Cassandra.
+- None (existing sections unchanged).
 
 Added sections:
-- None.
+- "UI Design System": color palette and typography standards for the frontend.
 
 Removed sections:
-- "Non-relational storage" stack bullet (Cassandra mandate).
+- None.
 
 Templates requiring updates:
-- .specify/templates/plan-template.md ✅ no change needed (generic "Constitution Check")
+- .specify/templates/plan-template.md ✅ no change needed (generic checks)
 - .specify/templates/spec-template.md ✅ no change needed (no constitution refs)
 - .specify/templates/tasks-template.md ✅ no change needed (no constitution refs)
 - .specify/templates/checklist-template.md ✅ no change needed
 - CLAUDE.md ✅ no change needed (generic plan-context guidance)
 
 Follow-up TODOs:
-- specs/001-living-docs-platform/plan.md: the Redis-as-broker AND Cassandra entries
-  in Complexity Tracking are now compliant (v1.2.0) and may be removed (manual).
+- Existing components still using `blue-*` / `gray-*` Tailwind classes should
+  be migrated to `indigo-*` / `slate-*` in a dedicated cleanup task.
 -->
 
 # Tessera Constitution
@@ -95,6 +92,25 @@ quality gates remove style debate and keep the codebase consistently reviewable.
   Docker containers and Kubernetes manifests. Manual, undeclared infrastructure
   changes are prohibited.
 
+## UI Design System
+
+All frontend work MUST conform to the following visual standards. Rationale: a
+consistent palette prevents visual drift and gives Tessera a distinct identity
+beyond the generic blue-gray SaaS default.
+
+* **Color scale**: Tailwind's `slate-*` scale MUST be used for all neutral surfaces,
+  borders, and text. The `gray-*` scale MUST NOT be introduced for new work.
+* **Primary accent**: `indigo-600` MUST be used for interactive elements (buttons,
+  links, focus rings). Hover states MUST use `indigo-700`; focus rings MUST use
+  `indigo-500`. The `blue-*` scale MUST NOT be introduced for new work.
+* **Semantic colors**: `red-*` remains the standard for error and destructive states.
+  No other accent color families may be introduced without a constitution amendment.
+* **Typography**: Geist Sans (primary) and Geist Mono (code) MUST be loaded as font
+  variables; Inter from Google Fonts MAY be used as a body-text fallback. No other
+  typefaces may be added without a constitution amendment.
+* **Tone**: The UI MUST remain minimal and content-focused — subtle borders, generous
+  whitespace, and no decorative gradients or heavy drop shadows on standard surfaces.
+
 ## Security Requirements
 
 * **Authentication**: API gateways MUST authenticate using OAuth 2.0 with JSON Web
@@ -129,4 +145,4 @@ spec, or implementation conflicts with it, this document prevails.
 * **Runtime guidance**: Agents and contributors MUST consult the current `plan.md`
   for project-specific technical context, as directed by `CLAUDE.md`.
 
-**Version**: 1.2.0 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-06-12
+**Version**: 1.3.0 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-06-20
