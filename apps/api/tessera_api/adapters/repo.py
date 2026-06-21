@@ -6,7 +6,7 @@ from datetime import UTC
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tessera_api.adapters.models import (
@@ -25,6 +25,7 @@ from tessera_api.adapters.models import (
     RefreshTokenModel,
     RolePermissionModel,
     SourceArtifactModel,
+    SpaceMembershipModel,
     SpaceModel,
     UpdateProposalModel,
     UserModel,
@@ -53,6 +54,8 @@ from tessera_core.domain.entities import (
     RolePermission,
     SourceArtifact,
     Space,
+    SpaceMembership,
+    SpaceRole,
     UpdateProposal,
     User,
     UserRole,
@@ -72,6 +75,7 @@ from tessera_core.ports.repositories import (
     PasswordResetTokenRepository,
     ProposalRepository,
     SourceArtifactRepository,
+    SpaceMembershipRepository,
     SpaceRepository,
     UserRepository,
 )
@@ -712,6 +716,16 @@ class SqlUserRepository(UserRepository):
         await self._session.flush()
         return _user_from_model(model)
 
+    async def set_admin(self, user_id: UUID, is_admin: bool) -> User:
+        result = await self._session.execute(select(UserModel).where(UserModel.id == user_id))
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise ValueError(f"User {user_id} not found")
+        model.is_admin = is_admin
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _user_from_model(model)
+
 
 class SqlAgentCredentialRepository(AgentCredentialRepository):
     def __init__(self, session: AsyncSession) -> None:
@@ -1332,9 +1346,7 @@ class SqlPasswordResetTokenRepository(PasswordResetTokenRepository):
 
     async def get_by_hash(self, token_hash: str) -> PasswordResetToken | None:
         result = await self._session.execute(
-            select(PasswordResetTokenModel).where(
-                PasswordResetTokenModel.token_hash == token_hash
-            )
+            select(PasswordResetTokenModel).where(PasswordResetTokenModel.token_hash == token_hash)
         )
         model = result.scalar_one_or_none()
         return _prt_from_model(model) if model else None
@@ -1350,3 +1362,97 @@ class SqlPasswordResetTokenRepository(PasswordResetTokenRepository):
             )
             .values(consumed_at=datetime.now(UTC))
         )
+
+
+# ---------------------------------------------------------------------------
+# SpaceMembership
+# ---------------------------------------------------------------------------
+
+
+def _membership_from_model(m: SpaceMembershipModel) -> SpaceMembership:
+    return SpaceMembership(
+        id=m.id,
+        space_id=m.space_id,
+        user_id=m.user_id,
+        role=SpaceRole(m.role),
+        invited_by_user_id=m.invited_by_user_id,
+        created_at=m.created_at,
+        updated_at=m.updated_at,
+    )
+
+
+class SqlSpaceMembershipRepository(SpaceMembershipRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, membership: SpaceMembership) -> SpaceMembership:
+        model = SpaceMembershipModel(
+            id=membership.id,
+            space_id=membership.space_id,
+            user_id=membership.user_id,
+            role=membership.role.value,
+            invited_by_user_id=membership.invited_by_user_id,
+        )
+        self._session.add(model)
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _membership_from_model(model)
+
+    async def get(self, space_id: UUID, user_id: UUID) -> SpaceMembership | None:
+        result = await self._session.execute(
+            select(SpaceMembershipModel).where(
+                SpaceMembershipModel.space_id == space_id,
+                SpaceMembershipModel.user_id == user_id,
+            )
+        )
+        model = result.scalar_one_or_none()
+        return _membership_from_model(model) if model else None
+
+    async def list_by_space(self, space_id: UUID) -> list[SpaceMembership]:
+        result = await self._session.execute(
+            select(SpaceMembershipModel).where(SpaceMembershipModel.space_id == space_id)
+        )
+        return [_membership_from_model(m) for m in result.scalars().all()]
+
+    async def list_by_user(self, user_id: UUID) -> list[SpaceMembership]:
+        result = await self._session.execute(
+            select(SpaceMembershipModel).where(SpaceMembershipModel.user_id == user_id)
+        )
+        return [_membership_from_model(m) for m in result.scalars().all()]
+
+    async def update_role(self, space_id: UUID, user_id: UUID, role: SpaceRole) -> SpaceMembership:
+        result = await self._session.execute(
+            select(SpaceMembershipModel).where(
+                SpaceMembershipModel.space_id == space_id,
+                SpaceMembershipModel.user_id == user_id,
+            )
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise ValueError("not a member")
+        model.role = role.value
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _membership_from_model(model)
+
+    async def remove(self, space_id: UUID, user_id: UUID) -> None:
+        result = await self._session.execute(
+            select(SpaceMembershipModel).where(
+                SpaceMembershipModel.space_id == space_id,
+                SpaceMembershipModel.user_id == user_id,
+            )
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise ValueError("not a member")
+        await self._session.delete(model)
+        await self._session.flush()
+
+    async def count_admins(self, space_id: UUID) -> int:
+        result = await self._session.execute(
+            select(func.count()).where(
+                SpaceMembershipModel.space_id == space_id,
+                SpaceMembershipModel.role == SpaceRole.ADMIN.value,
+            )
+        )
+        return result.scalar_one()

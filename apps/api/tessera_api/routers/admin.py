@@ -7,7 +7,61 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from tessera_api.adapters.database import get_db
+from tessera_api.adapters.repo import SqlAuditRepository, SqlUserRepository
+from tessera_api.auth.oidc import require_user
+
 router = APIRouter(tags=["admin"])
+
+
+class PlatformRoleRequest(BaseModel):
+    is_admin: bool
+
+
+@router.put("/users/{user_id}/platform-role")
+async def set_platform_role(user_id: UUID, body: PlatformRoleRequest, request: Request) -> dict:
+    from tessera_core.domain.entities import AuditRecord
+
+    user_info = await require_user(request)
+    actor_id = UUID(user_info.get("id") or user_info.get("sub"))
+
+    async with get_db() as session:
+        user_repo = SqlUserRepository(session)
+        actor = await user_repo.get_by_id(actor_id)
+        if actor is None or not actor.is_admin:
+            raise HTTPException(status_code=403, detail="Global Admin required")
+
+        target = await user_repo.get_by_id(user_id)
+        if target is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        previous_is_admin = target.is_admin
+        updated = await user_repo.set_admin(user_id, body.is_admin)
+
+        audit_repo = SqlAuditRepository(session)
+        await audit_repo.append(
+            AuditRecord(
+                actor_type="user",
+                actor_id=actor_id,
+                action="platform_role_changed",
+                entity_type="user",
+                entity_id=user_id,
+                metadata={
+                    "user_id": str(user_id),
+                    "previous_is_admin": previous_is_admin,
+                    "new_is_admin": body.is_admin,
+                },
+            )
+        )
+
+    return {
+        "user": {
+            "id": str(updated.id),
+            "display_name": updated.display_name,
+            "email": updated.email,
+            "is_admin": updated.is_admin,
+        }
+    }
 
 
 class RetentionPolicyRequest(BaseModel):

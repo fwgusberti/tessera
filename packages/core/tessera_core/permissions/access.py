@@ -9,6 +9,8 @@ from tessera_core.domain.entities import (
     Document,
     DocumentLifecycleState,
     RolePermission,
+    SpaceMembership,
+    SpaceRole,
     User,
     UserRole,
 )
@@ -123,3 +125,63 @@ def can_admin_space(ctx: AccessContext, space_id: UUID) -> bool:
         return True
     perm = _resolve_permission(ctx.user, space_id, ctx.space_permissions)
     return perm is not None and perm.role == UserRole.SPACE_ADMIN
+
+
+# ---------------------------------------------------------------------------
+# SpaceMembership-based permission functions (Feature 024)
+# ---------------------------------------------------------------------------
+
+_SPACE_ROLE_ORDER = [SpaceRole.VIEWER, SpaceRole.EDITOR, SpaceRole.ADMIN]
+
+
+def get_space_membership_role(
+    user_id: UUID,
+    space_id: UUID,
+    memberships: list[SpaceMembership],
+) -> SpaceRole | None:
+    """Return the user's direct membership role in the space, or None if not a member."""
+    for m in memberships:
+        if m.space_id == space_id and m.user_id == user_id:
+            return m.role
+    return None
+
+
+def effective_space_role(
+    user: User,
+    space_id: UUID,
+    memberships: list[SpaceMembership],
+) -> SpaceRole | None:
+    """Global admin is implicit ADMIN in every space."""
+    if user.is_admin:
+        return SpaceRole.ADMIN
+    return get_space_membership_role(user.id, space_id, memberships)
+
+
+def can_write_document(
+    user: User,
+    space_id: UUID,
+    memberships: list[SpaceMembership],
+) -> bool:
+    """True if effective role is EDITOR or ADMIN."""
+    role = effective_space_role(user, space_id, memberships)
+    return role in (SpaceRole.EDITOR, SpaceRole.ADMIN)
+
+
+def can_manage_members(
+    user: User,
+    space_id: UUID,
+    memberships: list[SpaceMembership],
+) -> bool:
+    """True if effective role is ADMIN."""
+    return effective_space_role(user, space_id, memberships) == SpaceRole.ADMIN
+
+
+def can_read_space_document(
+    user: User,
+    space_id: UUID,
+    memberships: list[SpaceMembership],
+) -> bool:
+    """True if user is any member of the space or a global admin."""
+    if user.is_admin:
+        return True
+    return get_space_membership_role(user.id, space_id, memberships) is not None

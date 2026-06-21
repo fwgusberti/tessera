@@ -292,3 +292,24 @@ class OnboardingProgress(BaseModel):
     completed_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Space membership domain entities
+# ---------------------------------------------------------------------------
+
+
+class SpaceRole(str, Enum):
+    VIEWER = "viewer"
+    EDITOR = "editor"
+    ADMIN = "admin"
+
+
+class SpaceMembership(BaseModel):
+    id: UUID = Field(default_factory=uuid.uuid4)
+    space_id: UUID
+    user_id: UUID
+    role: SpaceRole
+    invited_by_user_id: UUID | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None

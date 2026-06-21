@@ -70,13 +70,36 @@ async def list_documents(
 @router.post("/documents", status_code=status.HTTP_201_CREATED)
 async def create_document(body: CreateDocumentRequest, request: Request) -> dict:
     from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.repo import SqlDocumentRepository, SqlDocumentVersionRepository
+    from tessera_api.adapters.repo import (
+        SqlDocumentRepository,
+        SqlDocumentVersionRepository,
+        SqlSpaceMembershipRepository,
+        SqlUserRepository,
+    )
     from tessera_api.auth.oidc import require_user
+    from tessera_core.permissions.access import can_write_document
 
     user_info = await require_user(request)
     user_id_str = user_info.get("id") or user_info.get("sub")
     owner_id = UUID(user_id_str) if user_id_str else None
     async with get_db() as session:
+        user_repo = SqlUserRepository(session)
+        actor = await user_repo.get_by_id(owner_id) if owner_id else None
+        if actor is None:
+            try:
+                actor = await user_repo.get_by_subject(user_info.get("sub", ""))
+            except Exception:
+                pass
+
+        if actor is not None:
+            membership_repo = SqlSpaceMembershipRepository(session)
+            memberships = await membership_repo.list_by_space(body.space_id)
+            if not can_write_document(actor, body.space_id, memberships):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You must be an Editor or Admin to create documents in this space",
+                )
+
         doc_repo = SqlDocumentRepository(session)
         ver_repo = SqlDocumentVersionRepository(session)
 

@@ -1,13 +1,33 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { api } from "@/lib/api";
+import { RoleBadge } from "@/components/members/RoleBadge";
+
+type SpaceRole = "admin" | "editor" | "viewer";
 
 export function NavBar() {
   const { status, logout } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [spaceRole, setSpaceRole] = useState<SpaceRole | null>(null);
+
+  const spaceIdMatch = pathname?.match(/^\/spaces\/([^/]+)/);
+  const currentSpaceId = spaceIdMatch?.[1] ?? null;
+
+  useEffect(() => {
+    if (!currentSpaceId || status !== "authenticated") {
+      setSpaceRole(null);
+      return;
+    }
+    api
+      .get<{ membership: { role: SpaceRole } }>(`/v1/spaces/${currentSpaceId}/members/me`)
+      .then((data) => setSpaceRole(data.membership.role))
+      .catch(() => setSpaceRole(null));
+  }, [currentSpaceId, status]);
 
   const handleLogout = async () => {
     await logout();
@@ -45,6 +65,12 @@ export function NavBar() {
           <a href="/admin" className="text-sm text-slate-600 hover:text-slate-900">
             Admin
           </a>
+          {spaceRole && (
+            <div className="flex items-center gap-1 text-xs text-slate-500">
+              <span>My role:</span>
+              <RoleBadge role={spaceRole} />
+            </div>
+          )}
           {status === "authenticated" && (
             <>
               <a href="/account" className="text-sm text-slate-600 hover:text-slate-900">
