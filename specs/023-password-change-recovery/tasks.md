@@ -119,7 +119,7 @@
 - [X] T031 [P] Run `pytest apps/api --cov=tessera_api --cov-report=term-missing` and fix any modules below 85% coverage threshold — target files: `auth/password_strength.py`, `auth/rate_limit.py`, `routers/auth.py` (new endpoints), `adapters/repo.py` (new repository methods)
 - [X] T032 [P] Run `pytest packages/core --cov=tessera_core --cov-report=term-missing` and fix any coverage gaps in `services/password_reset.py`
 - [X] T033 Run `cd apps/web && npx vitest run` and confirm all existing and new tests pass; add Vitest tests for `forgotPassword`, `changePassword`, `resetPassword` client functions in `apps/web/tests/password.test.ts` if not already covered
-- [ ] T034 Execute quickstart.md validation scenarios end-to-end against local dev stack and confirm all acceptance criteria pass
+- [X] T034 Execute quickstart.md validation scenarios end-to-end against local dev stack and confirm all acceptance criteria pass
 
 ---
 
