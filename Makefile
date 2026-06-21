@@ -3,12 +3,14 @@
 ROOT  := $(shell pwd)
 DB    := postgresql+psycopg://tessera:tessera@localhost:5432/tessera
 REDIS := redis://localhost:6379/0
+HOST  ?= localhost
 
 ## ── full stack ─────────────────────────────────────────────────────────────
 
 # Start infra + all services (Ctrl-C stops everything)
+# Override HOST to expose on your network: make dev HOST=192.168.0.8
 dev:
-	@bash scripts/dev.sh
+	@HOST=$(HOST) bash scripts/dev.sh
 
 ## ── infrastructure ─────────────────────────────────────────────────────────
 
@@ -33,7 +35,7 @@ api:
 	cd apps/api && \
 		DATABASE_URL=$(DB) REDIS_URL=$(REDIS) SECRET_KEY=dev-secret-key \
 		OLLAMA_BASE_URL=http://localhost:11434 \
-		uv run uvicorn tessera_api.main:app --reload --port 8000
+		uv run uvicorn tessera_api.main:app --reload --host 0.0.0.0 --port 8000
 
 workers:
 	cd apps/workers && \
@@ -42,11 +44,11 @@ workers:
 
 mcp:
 	cd apps/mcp-server && \
-		DATABASE_URL=$(DB) API_URL=http://localhost:8000 \
-		uv run uvicorn tessera_mcp.main:app --port 8001
+		DATABASE_URL=$(DB) API_URL=http://$(HOST):8000 \
+		uv run uvicorn tessera_mcp.main:app --host 0.0.0.0 --port 8001
 
 web:
-	cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
+	cd apps/web && NEXT_PUBLIC_API_URL=http://$(HOST):8000 npm run dev -- -H 0.0.0.0
 
 ## ── tests ───────────────────────────────────────────────────────────────────
 

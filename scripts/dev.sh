@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DB="postgresql+psycopg://tessera:tessera@localhost:5432/tessera"
 REDIS="redis://localhost:6379/0"
+HOST="${HOST:-localhost}"
 
 # ── colors ────────────────────────────────────────────────────────────────────
 CY='\033[0;36m'   # api
@@ -55,7 +56,7 @@ echo -e "${CY}[api    ]${NC} Running migrations..."
 (cd "$ROOT/apps/api" && \
   DATABASE_URL="$DB" REDIS_URL="$REDIS" SECRET_KEY=dev-secret-key \
   OLLAMA_BASE_URL=http://localhost:11434 \
-  uv run uvicorn tessera_api.main:app --reload --port 8000 2>&1 | prefix "$CY" "api") &
+  uv run uvicorn tessera_api.main:app --reload --host 0.0.0.0 --port 8000 2>&1 | prefix "$CY" "api") &
 PIDS+=($!)
 
 (cd "$ROOT/apps/workers" && \
@@ -64,21 +65,21 @@ PIDS+=($!)
 PIDS+=($!)
 
 (cd "$ROOT/apps/mcp-server" && \
-  DATABASE_URL="$DB" API_URL=http://localhost:8000 \
-  uv run uvicorn tessera_mcp.main:app --port 8001 2>&1 | prefix "$BL" "mcp") &
+  DATABASE_URL="$DB" API_URL=http://"$HOST":8000 \
+  uv run uvicorn tessera_mcp.main:app --host 0.0.0.0 --port 8001 2>&1 | prefix "$BL" "mcp") &
 PIDS+=($!)
 
 (cd "$ROOT/apps/web" && \
   npm install --silent 2>&1 | prefix "$GR" "web" && \
-  NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev 2>&1 | prefix "$GR" "web") &
+  NEXT_PUBLIC_API_URL=http://"$HOST":8000 npm run dev -- -H 0.0.0.0 2>&1 | prefix "$GR" "web") &
 PIDS+=($!)
 
 # ── ready ─────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GR}All services started.${NC}"
-echo -e "  API  →  http://localhost:8000      (docs: http://localhost:8000/docs)"
-echo -e "  Web  →  http://localhost:3000"
-echo -e "  MCP  →  http://localhost:8001"
+echo -e "  API  →  http://$HOST:8000      (docs: http://$HOST:8000/docs)"
+echo -e "  Web  →  http://$HOST:3000"
+echo -e "  MCP  →  http://$HOST:8001"
 echo ""
 echo "Press Ctrl-C to stop all services."
 echo ""
