@@ -43,7 +43,7 @@ def create_app() -> FastAPI:
     app.add_middleware(SessionMiddleware, secret_key=settings.secret_key)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if settings.environment == "development" else [],
+        allow_origins=[settings.frontend_url],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

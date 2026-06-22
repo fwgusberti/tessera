@@ -326,6 +326,36 @@ class TestJoinStatus:
         assert response.json()["status"] == "pending"
 
 
+class TestCORSPreflight:
+    def test_options_preflight_returns_explicit_origin(self):
+        from fastapi.testclient import TestClient
+        from tessera_api.main import app
+
+        with TestClient(app) as client:
+            # Allowed origin should get credentials header
+            allowed = client.options(
+                "/v1/companies",
+                headers={
+                    "Origin": "http://localhost:3000",
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "content-type,authorization",
+                },
+            )
+            # Unauthorized origin must NOT receive access-control-allow-origin
+            disallowed = client.options(
+                "/v1/companies",
+                headers={
+                    "Origin": "http://evil.com",
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "content-type,authorization",
+                },
+            )
+
+        assert allowed.headers.get("access-control-allow-origin") == "http://localhost:3000"
+        assert allowed.headers.get("access-control-allow-credentials") == "true"
+        assert disallowed.headers.get("access-control-allow-origin") is None
+
+
 class TestCancelJoinRequest:
     def test_cancel_returns_204(self):
         user_id = uuid.uuid4()

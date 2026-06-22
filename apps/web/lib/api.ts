@@ -32,11 +32,19 @@ async function request<T>(path: string, options?: RequestInit, isRetry = false):
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    credentials: "include",
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      ...options,
+      credentials: "include",
+      headers,
+    });
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error("Could not reach the server. Please check your connection and try again.");
+    }
+    throw err;
+  }
 
   if (!res.ok) {
     if (res.status === 401 && authConfig) {
