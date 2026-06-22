@@ -1,37 +1,46 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.2.0 → 1.3.0
-Rationale: MINOR bump. Adds a new "UI Design System" section establishing the
-canonical color palette (Slate + Indigo) and font stack (Geist/Inter). No Core
-Principle is modified or removed; this only adds new mandatory UI guidance for
-the frontend layer.
+Version change: 1.3.0 → 1.4.0
+Rationale: MINOR bump. Adds a new Core Principle VI ("Tenant Data Isolation")
+and expands the Security Requirements section with explicit multi-tenancy
+enforcement rules. The bug that prompted this amendment: companies were
+accessing each other's Spaces because no architectural principle mandated
+per-tenant query scoping. No existing principle is renamed or removed.
 
-Prior amendment (v1.2.0): consolidated persistent storage onto PostgreSQL,
-removing the Cassandra mandate.
+Prior amendment (v1.3.0): added UI Design System section (color palette +
+typography standards).
 
-Prior amendment (v1.1.0): expanded the caching rule to permit Redis/other
-brokers as ephemeral task-queue transport.
+Prior amendment (v1.2.0): consolidated persistent storage onto PostgreSQL.
+
+Prior amendment (v1.1.0): expanded caching rule to permit Redis/other brokers
+as ephemeral task-queue transport.
 
 Modified sections:
-- None (existing sections unchanged).
+- "Security Requirements": added Tenant Data Isolation subsection with
+  enforcement rules for multi-tenancy.
 
 Added sections:
-- "UI Design System": color palette and typography standards for the frontend.
+- Core Principle VI: Tenant Data Isolation (new non-negotiable principle).
 
 Removed sections:
 - None.
 
 Templates requiring updates:
-- .specify/templates/plan-template.md ✅ no change needed (generic checks)
-- .specify/templates/spec-template.md ✅ no change needed (no constitution refs)
-- .specify/templates/tasks-template.md ✅ no change needed (no constitution refs)
-- .specify/templates/checklist-template.md ✅ no change needed
-- CLAUDE.md ✅ no change needed (generic plan-context guidance)
+- .specify/templates/plan-template.md ✅ no change needed — Constitution Check
+  is generic and picks up the new principle automatically.
+- .specify/templates/spec-template.md ✅ no change needed — no constitution
+  refs hardcoded.
+- .specify/templates/tasks-template.md ✅ no change needed — task categories
+  are project-driven, not principle-enumerated.
+- .specify/templates/checklist-template.md ✅ no change needed.
+- CLAUDE.md ✅ no change needed (generic plan-context guidance).
 
 Follow-up TODOs:
-- Existing components still using `blue-*` / `gray-*` Tailwind classes should
-  be migrated to `indigo-*` / `slate-*` in a dedicated cleanup task.
+- Existing data-access layers (Space, Document, Chat) MUST be audited for
+  missing company_id scoping and any violations fixed before the next release.
+- Row-Level Security (RLS) policies on the PostgreSQL side should be
+  evaluated as a defense-in-depth enforcement layer.
 -->
 
 # Tessera Constitution
@@ -73,6 +82,35 @@ guard against regressions in the rules that matter most.
 Code MUST pass Ruff and Black checks before being committed. Linting and formatting
 violations MUST block the commit, not be deferred. Rationale: automated, uniform
 quality gates remove style debate and keep the codebase consistently reviewable.
+
+### VI. Tenant Data Isolation (NON-NEGOTIABLE)
+Every data access MUST be strictly scoped to the authenticated company (tenant).
+Cross-tenant data leakage — reading, writing, or referencing another company's
+data without explicit, audited authorization — is a critical security violation.
+
+Concrete rules:
+
+* Every database query and mutation MUST include an explicit `company_id` filter
+  derived from the authenticated session. Unscoped queries on multi-tenant tables
+  are PROHIBITED.
+* Company context MUST be established at the request boundary (API layer) and
+  MUST be propagated unchanged through every service, repository, and persistence
+  call in that request's call chain. It MUST NOT be re-derived from user-supplied
+  input deeper in the stack.
+* No service or repository method that returns tenant-owned data may accept a
+  bare entity ID without also receiving and validating the `company_id`. Methods
+  that omit tenant scoping MUST be rejected in code review.
+* Cross-tenant access is permitted ONLY for explicitly modeled, audited operations
+  (e.g., a super-admin read that is separately role-gated and audit-logged). Any
+  such operation MUST be documented in the plan and flagged in the Constitution
+  Check.
+* Automated isolation tests MUST be written for every data-access path: a request
+  authenticated as Company A attempting to access Company B's resources MUST
+  receive a 403 or empty result — never Company B's data.
+
+Rationale: in a multi-tenant SaaS, a single missing `company_id` predicate is a
+data breach. The principle must be enforced architecturally and verified by tests,
+not left to developer discipline on each feature.
 
 ## Technical Stack Boundaries
 
@@ -119,6 +157,11 @@ beyond the generic blue-gray SaaS default.
   committed to source control. Secrets MUST be supplied via environment injection.
 * **Audit logging**: Every state-changing action MUST emit a structured audit log
   recording the actor, timestamp, and affected entity ID.
+* **Tenant data isolation**: See Core Principle VI. Every feature plan MUST include
+  an explicit "Tenant Isolation" section in its Constitution Check, identifying which
+  tables are accessed, confirming `company_id` scoping is present on every query, and
+  listing the cross-tenant isolation tests that will be written. Features that omit
+  this check MUST NOT be merged.
 
 ## Documentation Separation
 
@@ -145,4 +188,4 @@ spec, or implementation conflicts with it, this document prevails.
 * **Runtime guidance**: Agents and contributors MUST consult the current `plan.md`
   for project-specific technical context, as directed by `CLAUDE.md`.
 
-**Version**: 1.3.0 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-06-20
+**Version**: 1.4.0 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-06-22
