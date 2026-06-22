@@ -391,3 +391,54 @@ class TestCancelJoinRequest:
                     )
 
         assert response.status_code == 204
+
+
+class TestGetMyCompaniesContract:
+    def test_returns_200_with_company_list_shape(self):
+        from fastapi.testclient import TestClient
+        from tessera_api.main import app
+
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        now = datetime.now(UTC)
+
+        company = Company(id=company_id, name="Acme Corp", admin_user_id=user_id, created_at=now)
+        membership = CompanyMembership(
+            id=uuid.uuid4(), user_id=user_id, company_id=company_id, role=CompanyRole.ADMIN
+        )
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.companies.get_db") as mock_get_db,
+                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_repo_cls,
+            ):
+                session = AsyncMock()
+                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
+                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+                mock_repo = AsyncMock()
+                mock_repo.list_memberships_for_user = AsyncMock(return_value=[membership])
+                mock_repo.get_by_id = AsyncMock(return_value=company)
+                mock_repo_cls.return_value = mock_repo
+
+                with TestClient(app) as client:
+                    response = client.get("/v1/companies/me", headers=_make_jwt_header(user_id))
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "companies" in body
+        assert isinstance(body["companies"], list)
+        entry = body["companies"][0]
+        assert "id" in entry
+        assert "name" in entry
+        assert "role" in entry
+        assert entry["role"] in ("admin", "member")
+
+    def test_returns_401_for_unauthenticated(self):
+        from fastapi.testclient import TestClient
+        from tessera_api.main import app
+
+        with TestClient(app) as client:
+            response = client.get("/v1/companies/me")
+
+        assert response.status_code == 401

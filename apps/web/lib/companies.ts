@@ -84,3 +84,18 @@ export async function getJoinStatus(companyId: string): Promise<JoinStatusRespon
 export async function cancelJoinRequest(companyId: string): Promise<void> {
   return api.delete<void>(`/v1/companies/${companyId}/join-request`);
 }
+
+export interface CompanyEntry {
+  id: string;
+  name: string;
+  role: "admin" | "member";
+}
+
+export interface CompanyMeResponse {
+  companies: CompanyEntry[];
+}
+
+export async function getMyCompanies(): Promise<CompanyEntry[]> {
+  const res = await api.get<CompanyMeResponse>("/v1/companies/me");
+  return res.companies;
+}

@@ -55,6 +55,16 @@ class CreateDomainPolicyRequest(BaseModel):
     policy: Literal["auto_join", "request_approval"]
 
 
+class CompanyMeEntry(BaseModel):
+    id: str
+    name: str
+    role: Literal["admin", "member"]
+
+
+class CompanyMeResponse(BaseModel):
+    companies: list[CompanyMeEntry]
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -77,6 +87,31 @@ async def _require_company_admin(
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+@router.get("/companies/me")
+async def get_my_companies(request: Request) -> CompanyMeResponse:
+    user_info = await require_user(request)
+    user_id = UUID(user_info["sub"])
+
+    async with get_db() as session:
+        company_repo = SqlCompanyRepository(session)
+        memberships = await company_repo.list_memberships_for_user(user_id)
+
+        entries = []
+        for m in memberships:
+            company = await company_repo.get_by_id(m.company_id)
+            if company is None:
+                continue
+            entries.append(CompanyMeEntry(
+                id=str(company.id),
+                name=company.name,
+                role=m.role.value,
+            ))
+
+        entries.sort(key=lambda e: e.name)
+
+    return CompanyMeResponse(companies=entries)
+
 
 @router.post("/companies", status_code=status.HTTP_201_CREATED)
 async def create_company(body: CreateCompanyRequest, request: Request) -> dict:

@@ -17,6 +17,17 @@ vi.mock("@/lib/auth", () => ({
   useAuth: () => ({ status: "authenticated", logout: vi.fn() }),
 }));
 
+vi.mock("@/lib/company", () => ({
+  useCompany: () => ({
+    companies: [],
+    activeCompany: null,
+    isLoading: false,
+    setActiveCompany: vi.fn(),
+    createAndSetActive: vi.fn(),
+    reloadCompanies: vi.fn(),
+  }),
+}));
+
 import { SpaceSelector } from "@/components/SpaceSelector";
 import { ProgressStepper } from "@/components/onboarding/ProgressStepper";
 import { AddDocumentModal } from "@/components/documents/AddDocumentModal";

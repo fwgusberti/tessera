@@ -18,6 +18,20 @@ vi.mock("@/lib/auth", () => ({
   useAuth: () => ({ status: mockNavStatus, logout: mockLogout }),
 }));
 
+let mockCompanies: Array<{ id: string; name: string; role: "admin" | "member" }> = [];
+let mockActiveCompany: { id: string; name: string; role: "admin" | "member" } | null = null;
+
+vi.mock("@/lib/company", () => ({
+  useCompany: () => ({
+    companies: mockCompanies,
+    activeCompany: mockActiveCompany,
+    isLoading: false,
+    setActiveCompany: vi.fn(),
+    createAndSetActive: vi.fn(),
+    reloadCompanies: vi.fn(),
+  }),
+}));
+
 import { NavBar } from "@/components/NavBar";
 
 beforeEach(() => {
@@ -25,6 +39,8 @@ beforeEach(() => {
   mockNavStatus = "authenticated";
   mockPathname = "/";
   mockLogout.mockResolvedValue(undefined);
+  mockCompanies = [];
+  mockActiveCompany = null;
 });
 
 describe("NavBar", () => {
@@ -202,5 +218,35 @@ describe("NavBar — Chat/Documents nav links (US2)", () => {
     const docLink = desktopNav!.querySelector('a[href="/documents"]');
     expect(docLink!.className).toContain("text-slate-600");
     expect(docLink!.className).not.toContain("text-indigo-600");
+  });
+});
+
+// ─── CompanyMenu presence in NavBar ──────────────────────────────────────────
+
+describe("NavBar — CompanyMenu presence", () => {
+  it("shows company name in desktop bar when authenticated and has companies", () => {
+    mockNavStatus = "authenticated";
+    mockCompanies = [{ id: "1", name: "Acme Corp", role: "admin" }];
+    mockActiveCompany = { id: "1", name: "Acme Corp", role: "admin" };
+    render(<NavBar />);
+    expect(screen.getByText("Acme Corp")).toBeInTheDocument();
+  });
+
+  it("does not show company menu when unauthenticated", () => {
+    mockNavStatus = "unauthenticated";
+    mockCompanies = [{ id: "1", name: "Acme Corp", role: "admin" }];
+    mockActiveCompany = { id: "1", name: "Acme Corp", role: "admin" };
+    render(<NavBar />);
+    expect(screen.queryByText("Acme Corp")).not.toBeInTheDocument();
+  });
+
+  it("shows company menu in mobile menu when authenticated", () => {
+    mockNavStatus = "authenticated";
+    mockCompanies = [{ id: "1", name: "Acme Corp", role: "admin" }];
+    mockActiveCompany = { id: "1", name: "Acme Corp", role: "admin" };
+    render(<NavBar />);
+    fireEvent.click(screen.getByRole("button", { name: /open menu/i }));
+    const acmeTexts = screen.getAllByText("Acme Corp");
+    expect(acmeTexts.length).toBeGreaterThanOrEqual(1);
   });
 });

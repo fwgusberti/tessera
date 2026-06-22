@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { RoleBadge } from "@/components/members/RoleBadge";
+import { CompanyMenu } from "@/components/company/CompanyMenu";
 
 type SpaceRole = "admin" | "editor" | "viewer";
 
@@ -45,9 +46,12 @@ export function NavBar() {
   return (
     <nav className="bg-white border-b border-slate-200 px-4 py-3">
       <div className="flex items-center justify-between">
-        <a href="/" className="text-xl font-semibold text-slate-900">
-          Tessera
-        </a>
+        <div className="flex items-center gap-4">
+          <a href="/" className="text-xl font-semibold text-slate-900">
+            Tessera
+          </a>
+          {status === "authenticated" && <CompanyMenu />}
+        </div>
         {/* Desktop nav links */}
         <div className="hidden md:flex items-center gap-4">
           <a
@@ -122,6 +126,11 @@ export function NavBar() {
           />
           <div className="relative z-20 border-t border-slate-100 mt-2 pb-2 bg-white">
             <div className="flex flex-col">
+              {status === "authenticated" && (
+                <div className="px-2 py-3 border-b border-slate-100">
+                  <CompanyMenu />
+                </div>
+              )}
               <a
                 href="/"
                 onClick={() => setIsMenuOpen(false)}
