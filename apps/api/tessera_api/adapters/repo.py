@@ -982,7 +982,7 @@ def _company_from_model(m: CompanyModel) -> Company:
     )
 
 
-def _membership_from_model(m: CompanyMembershipModel) -> CompanyMembership:
+def _company_membership_from_model(m: CompanyMembershipModel) -> CompanyMembership:
     return CompanyMembership(
         id=m.id,
         user_id=m.user_id,
@@ -1026,7 +1026,7 @@ class SqlCompanyRepository(CompanyRepository):
         self._session.add(model)
         await self._session.flush()
         await self._session.refresh(model)
-        return _membership_from_model(model)
+        return _company_membership_from_model(model)
 
     async def get_membership(self, user_id: UUID, company_id: UUID) -> CompanyMembership | None:
         result = await self._session.execute(
@@ -1036,13 +1036,13 @@ class SqlCompanyRepository(CompanyRepository):
             )
         )
         model = result.scalar_one_or_none()
-        return _membership_from_model(model) if model else None
+        return _company_membership_from_model(model) if model else None
 
     async def list_memberships_for_user(self, user_id: UUID) -> list[CompanyMembership]:
         result = await self._session.execute(
             select(CompanyMembershipModel).where(CompanyMembershipModel.user_id == user_id)
         )
-        return [_membership_from_model(m) for m in result.scalars().all()]
+        return [_company_membership_from_model(m) for m in result.scalars().all()]
 
 
 # ---------------------------------------------------------------------------

@@ -144,6 +144,108 @@ class TestSqlCompanyRepositoryMembership:
 
         assert result is None
 
+    @pytest.mark.anyio
+    async def test_add_membership_returns_company_membership_type(
+        self, mock_session, company_id, user_id
+    ):
+        from tessera_api.adapters.repo import SqlCompanyRepository
+
+        membership = CompanyMembership(
+            user_id=user_id, company_id=company_id, role=CompanyRole.ADMIN
+        )
+
+        async def fake_refresh(m):
+            m.joined_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+        mock_session.refresh.side_effect = fake_refresh
+
+        repo = SqlCompanyRepository(mock_session)
+        result = await repo.add_membership(membership)
+
+        assert isinstance(result, CompanyMembership)
+        assert hasattr(result, "company_id")
+        assert not hasattr(result, "space_id")
+
+    @pytest.mark.anyio
+    async def test_add_membership_role_round_trips(
+        self, mock_session, company_id, user_id
+    ):
+        from tessera_api.adapters.repo import SqlCompanyRepository
+
+        membership = CompanyMembership(
+            user_id=user_id, company_id=company_id, role=CompanyRole.ADMIN
+        )
+
+        async def fake_refresh(m):
+            m.joined_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+        mock_session.refresh.side_effect = fake_refresh
+
+        repo = SqlCompanyRepository(mock_session)
+        result = await repo.add_membership(membership)
+
+        assert result.role == CompanyRole.ADMIN
+
+    @pytest.mark.anyio
+    async def test_get_membership_returns_company_membership_when_found(
+        self, mock_session, company_id, user_id
+    ):
+        from tessera_api.adapters.models import CompanyMembershipModel
+        from tessera_api.adapters.repo import SqlCompanyRepository
+
+        membership_id = uuid.uuid4()
+        model = CompanyMembershipModel(
+            id=membership_id,
+            user_id=user_id,
+            company_id=company_id,
+            role="admin",
+            joined_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = model
+        mock_session.execute.return_value = mock_result
+
+        repo = SqlCompanyRepository(mock_session)
+        result = await repo.get_membership(user_id, company_id)
+
+        assert isinstance(result, CompanyMembership)
+        assert result.company_id == company_id
+
+    @pytest.mark.anyio
+    async def test_list_memberships_for_user_returns_company_memberships(
+        self, mock_session, company_id, user_id
+    ):
+        from tessera_api.adapters.models import CompanyMembershipModel
+        from tessera_api.adapters.repo import SqlCompanyRepository
+
+        models = [
+            CompanyMembershipModel(
+                id=uuid.uuid4(),
+                user_id=user_id,
+                company_id=company_id,
+                role="admin",
+                joined_at=datetime(2026, 1, 1, tzinfo=UTC),
+            ),
+            CompanyMembershipModel(
+                id=uuid.uuid4(),
+                user_id=user_id,
+                company_id=uuid.uuid4(),
+                role="member",
+                joined_at=datetime(2026, 1, 1, tzinfo=UTC),
+            ),
+        ]
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = models
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        repo = SqlCompanyRepository(mock_session)
+        result = await repo.list_memberships_for_user(user_id)
+
+        assert len(result) == 2
+        assert all(isinstance(m, CompanyMembership) for m in result)
+
 
 class TestSqlDomainPolicyRepository:
     @pytest.mark.anyio
