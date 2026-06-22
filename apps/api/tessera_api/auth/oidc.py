@@ -51,7 +51,7 @@ def get_current_user_from_session(request: Request) -> dict[str, Any] | None:
 async def require_user(request: Request) -> dict[str, Any]:
     # 1. Session cookie (existing OIDC path — backward compat)
     user = get_current_user_from_session(request)
-    if user:
+    if user and user.get("sub"):
         return user
 
     # 2. JWT Bearer token

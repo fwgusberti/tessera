@@ -340,10 +340,6 @@ class TestOnboardingGateIncompleteSession:
         assert response.status_code == 401, (
             f"Expected 401, got {response.status_code}: {response.json()}"
         )
-        body = response.json()
-        assert "invalid_session" in str(body), (
-            f"Expected 'invalid_session' error code, got: {body}"
-        )
 
     def test_complete_session_after_activate_passes_guard(self):
         """Session with sub (set by activate_company) must not crash on guarded routes (SC-001 regression)."""
@@ -399,3 +395,31 @@ class TestOnboardingGateIncompleteSession:
         assert response.status_code != 500, (
             f"Got 500 — KeyError: 'sub' regression: {response.json()}"
         )
+
+
+class TestStaleSessionNoJwt:
+    """Stale session cookie with no JWT must return 401 — no accidental open access."""
+
+    def _encode_session_cookie(self, session_data: dict) -> str:
+        import base64
+        import json
+        from itsdangerous import TimestampSigner
+
+        signer = TimestampSigner("dev-secret-key-change-in-production")
+        data = base64.b64encode(json.dumps(session_data).encode()).decode()
+        return signer.sign(data).decode()
+
+    def test_stale_session_no_jwt_returns_401(self):
+        """Stale session with active_company_id but no sub and no JWT → 401 (no open access)."""
+        company_id = uuid.uuid4()
+        broken_session = {"user": {"active_company_id": str(company_id)}}
+        session_cookie = self._encode_session_cookie(broken_session)
+
+        from fastapi.testclient import TestClient
+        from tessera_api.main import app
+
+        with TestClient(app) as client:
+            client.cookies.set("session", session_cookie)
+            response = client.get("/v1/companies/me")
+
+        assert response.status_code == 401

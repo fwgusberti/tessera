@@ -524,6 +524,100 @@ class TestActivateCompany:
         assert response.status_code == 403
 
 
+class TestGetMyCompaniesAuth:
+    """Verify auth fallthrough and gate exemption for GET /v1/companies/me."""
+
+    def _encode_session_cookie(self, session_data: dict) -> str:
+        import base64
+        import json
+        from itsdangerous import TimestampSigner
+
+        signer = TimestampSigner("dev-secret-key-change-in-production")
+        data = base64.b64encode(json.dumps(session_data).encode()).decode()
+        return signer.sign(data).decode()
+
+    def test_stale_session_with_valid_jwt_returns_200(self):
+        """Stale session (no sub) + valid JWT Bearer → require_user falls through to JWT → 200."""
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        now = datetime.now(UTC)
+
+        stale_session = {"user": {"active_company_id": str(company_id)}}
+        session_cookie = self._encode_session_cookie(stale_session)
+
+        company = Company(id=company_id, name="Acme Corp", admin_user_id=user_id, created_at=now)
+        membership = CompanyMembership(
+            id=uuid.uuid4(), user_id=user_id, company_id=company_id, role=CompanyRole.ADMIN
+        )
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.companies.get_db") as mock_get_db,
+                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_repo_cls,
+            ):
+                session = AsyncMock()
+                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
+                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+                mock_repo = AsyncMock()
+                mock_repo.list_memberships_for_user = AsyncMock(return_value=[membership])
+                mock_repo.get_by_id = AsyncMock(return_value=company)
+                mock_repo_cls.return_value = mock_repo
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    client.cookies.set("session", session_cookie)
+                    response = client.get("/v1/companies/me", headers=_make_jwt_header(user_id))
+
+        assert response.status_code == 200
+
+    def test_mid_onboarding_user_returns_empty_list(self):
+        """User with valid JWT but incomplete onboarding gets 200 + empty list (gate exemption)."""
+        user_id = uuid.uuid4()
+
+        progress = OnboardingProgress(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            completed_steps=["profile"],
+            current_step="company",
+            company_join_method=None,
+            completed_at=None,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+
+        mock_session_db = AsyncMock()
+        bearer_db = MagicMock()
+        bearer_db.return_value.__aenter__ = AsyncMock(return_value=mock_session_db)
+        bearer_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        bearer_ob_cls = MagicMock()
+        bearer_ob_instance = AsyncMock()
+        bearer_ob_instance.get_by_user_id = AsyncMock(return_value=progress)
+        bearer_ob_cls.return_value = bearer_ob_instance
+
+        handler_db = MagicMock()
+        handler_db.return_value.__aenter__ = AsyncMock(return_value=mock_session_db)
+        handler_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        handler_repo = AsyncMock()
+        handler_repo.list_memberships_for_user = AsyncMock(return_value=[])
+
+        with (
+            patch("tessera_api.adapters.database.get_db", bearer_db),
+            patch("tessera_api.adapters.repo.SqlOnboardingRepository", bearer_ob_cls),
+            patch("tessera_api.routers.companies.get_db", handler_db),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=handler_repo),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.get("/v1/companies/me", headers=_make_jwt_header(user_id))
+
+        assert response.status_code == 200
+        assert response.json()["companies"] == []
+
+
 class TestActivateCompanySession:
     """Verify that activate_company stores a complete identity in the session."""
 

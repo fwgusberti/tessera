@@ -62,6 +62,7 @@ async def require_onboarding_complete(request: Request) -> None:
     path = request.url.path
     exempt_patterns = [
         (r"^/v1/companies/suggestions$", {"GET"}),
+        (r"^/v1/companies/me$", {"GET"}),
         (r"^/v1/companies$", {"POST"}),
         (r"^/v1/companies/[^/]+/join$", {"POST"}),
         (r"^/v1/companies/[^/]+/join-status$", {"GET"}),
