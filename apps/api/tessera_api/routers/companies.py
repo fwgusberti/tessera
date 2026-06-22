@@ -135,7 +135,7 @@ async def create_company(body: CreateCompanyRequest, request: Request) -> dict:
             CompanyMembership(user_id=user_id, company_id=company.id, role=CompanyRole.ADMIN)
         )
 
-        await ob_repo.advance_step(user_id, "invite", company_join_method="created")
+        await ob_repo.advance_step(user_id, "invite", company_join_method="created", company_id=company.id)
 
         await write_audit(
             session,

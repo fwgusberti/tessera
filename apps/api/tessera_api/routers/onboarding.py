@@ -9,9 +9,9 @@ from pydantic import BaseModel, Field
 
 from tessera_api.adapters.audit import write_audit
 from tessera_api.adapters.database import get_db
-from tessera_api.adapters.repo import SqlOnboardingRepository, SqlUserRepository
+from tessera_api.adapters.repo import SqlCompanyRepository, SqlOnboardingRepository, SqlUserRepository
 from tessera_api.auth.oidc import require_user
-from tessera_core.domain.entities import OnboardingProgress
+from tessera_core.domain.entities import CompanyMembership, CompanyRole, OnboardingProgress
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
@@ -128,6 +128,26 @@ async def complete_onboarding(request: Request) -> dict:
     async with get_db() as session:
         ob_repo = SqlOnboardingRepository(session)
         progress = await ob_repo.complete(user_id)
+
+        if progress.company_join_method == "created" and progress.company_id:
+            company_repo = SqlCompanyRepository(session)
+            existing = await company_repo.get_membership(user_id, progress.company_id)
+            if existing is None:
+                await company_repo.add_membership(
+                    CompanyMembership(
+                        user_id=user_id,
+                        company_id=progress.company_id,
+                        role=CompanyRole.ADMIN,
+                    )
+                )
+                await write_audit(
+                    session,
+                    actor_type="user",
+                    actor_id=user_id,
+                    action="onboarding.admin_role_assigned",
+                    entity_type="company",
+                    entity_id=progress.company_id,
+                )
 
         from sqlalchemy import update as sa_update
         from tessera_api.adapters.models import UserModel

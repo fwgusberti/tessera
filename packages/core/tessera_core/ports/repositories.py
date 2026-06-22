@@ -218,7 +218,8 @@ class OnboardingRepository(ABC):
 
     @abstractmethod
     async def advance_step(
-        self, user_id: UUID, next_step: str, company_join_method: str | None = None
+        self, user_id: UUID, next_step: str, company_join_method: str | None = None,
+        company_id: UUID | None = None,
     ) -> OnboardingProgress: ...
 
     @abstractmethod

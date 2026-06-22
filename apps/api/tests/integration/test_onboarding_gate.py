@@ -225,6 +225,65 @@ class TestOnboardingGateExemptions:
         )
 
 
+class TestAdminInvariantAfterEnrollment:
+    """Admin-role invariant: exactly one ADMIN membership exists immediately after company creation."""
+
+    def test_create_company_establishes_exactly_one_admin(self):
+        """POST /v1/companies must create exactly one ADMIN membership for the new company (T011)."""
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        progress = _make_incomplete_progress(user_id)
+
+        bearer_db, bearer_ob_cls = _bearer_db_mocks(user_id)
+        handler_db, _ = _handler_db_mock()
+
+        company = Company(
+            id=company_id, name="Invariant Test Co", admin_user_id=user_id,
+            created_at=now, updated_at=now,
+        )
+        membership = CompanyMembership(
+            id=uuid.uuid4(), user_id=user_id, company_id=company_id,
+            role=CompanyRole.ADMIN, joined_at=now,
+        )
+
+        mock_company_repo = AsyncMock()
+        mock_company_repo.create = AsyncMock(return_value=company)
+        mock_company_repo.add_membership = AsyncMock(return_value=membership)
+
+        mock_ob_handler = AsyncMock()
+        mock_ob_handler.advance_step = AsyncMock(return_value=progress)
+
+        with (
+            patch("tessera_api.adapters.database.get_db", bearer_db),
+            patch("tessera_api.adapters.repo.SqlOnboardingRepository", bearer_ob_cls),
+            patch("tessera_api.routers.companies.get_db", handler_db),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_company_repo),
+            patch("tessera_api.routers.companies.SqlOnboardingRepository", return_value=mock_ob_handler),
+            patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.post(
+                    "/v1/companies",
+                    json={"name": "Invariant Test Co"},
+                    headers=_make_jwt_header(user_id),
+                )
+
+        assert response.status_code == 201, (
+            f"Expected 201, got {response.status_code}: {response.json()}"
+        )
+        mock_company_repo.add_membership.assert_awaited_once()
+        membership_arg = mock_company_repo.add_membership.await_args.args[0]
+        assert membership_arg.user_id == user_id
+        assert membership_arg.company_id == company_id
+        assert membership_arg.role == CompanyRole.ADMIN, (
+            f"Expected ADMIN role, got {membership_arg.role} — admin invariant violated"
+        )
+
+
 class TestOnboardingGateRegression:
     """Non-onboarding endpoints must remain blocked for mid-onboarding users."""
 

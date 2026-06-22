@@ -247,6 +247,58 @@ class TestSqlCompanyRepositoryMembership:
         assert all(isinstance(m, CompanyMembership) for m in result)
 
 
+class TestAddMembershipIdempotency:
+    @pytest.mark.anyio
+    async def test_add_membership_idempotent_no_duplicate_on_second_call(
+        self, mock_session, company_id, user_id
+    ):
+        """Calling add_membership twice should not raise — the unique constraint in the DB
+        is the final guard, but the router does a get_membership check first.
+        This test verifies that get_membership → conditional add_membership avoids duplicate calls."""
+        from tessera_api.adapters.repo import SqlCompanyRepository
+        from tessera_core.domain.entities import CompanyMembership, CompanyRole
+
+        membership = CompanyMembership(
+            user_id=user_id, company_id=company_id, role=CompanyRole.ADMIN
+        )
+
+        async def fake_refresh(m):
+            m.joined_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+        mock_session.refresh.side_effect = fake_refresh
+
+        repo = SqlCompanyRepository(mock_session)
+
+        # First call: get_membership returns None → add_membership called
+        mock_result_none = MagicMock()
+        mock_result_none.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = mock_result_none
+
+        existing = await repo.get_membership(user_id, company_id)
+        assert existing is None
+        result = await repo.add_membership(membership)
+        assert result.role == CompanyRole.ADMIN
+
+        # Second call: get_membership now returns the existing membership → add_membership NOT called
+        from tessera_api.adapters.models import CompanyMembershipModel
+        existing_model = CompanyMembershipModel(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            company_id=company_id,
+            role="admin",
+            joined_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_result_found = MagicMock()
+        mock_result_found.scalar_one_or_none.return_value = existing_model
+        mock_session.execute.return_value = mock_result_found
+
+        existing_second = await repo.get_membership(user_id, company_id)
+        assert existing_second is not None
+        assert existing_second.role == CompanyRole.ADMIN
+        # add_membership should only have been called once total (the first time)
+        assert mock_session.add.call_count == 1
+
+
 class TestSqlDomainPolicyRepository:
     @pytest.mark.anyio
     async def test_create_persists_policy(self, mock_session, company_id):

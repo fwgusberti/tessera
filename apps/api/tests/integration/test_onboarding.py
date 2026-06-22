@@ -301,3 +301,271 @@ class TestPostOnboardingComplete:
         with TestClient(app) as client:
             response = client.post("/v1/onboarding/complete", json={})
         assert response.status_code == 401
+
+    def test_complete_assigns_admin_for_creator(self):
+        """POST /onboarding/complete idempotently assigns ADMIN role for a company creator."""
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        completed_progress = _make_progress(
+            user_id=user_id,
+            completed_steps=["profile", "company", "invite"],
+            current_step="complete",
+            company_join_method="created",
+            company_id=company_id,
+            completed_at=now,
+        )
+
+        with (
+            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
+            patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
+            patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
+        ):
+            mock_session = AsyncMock()
+            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            mock_ob = AsyncMock()
+            mock_ob.complete = AsyncMock(return_value=completed_progress)
+            mock_ob_cls.return_value = mock_ob
+
+            mock_co = AsyncMock()
+            mock_co.get_membership = AsyncMock(return_value=None)
+            mock_co.add_membership = AsyncMock()
+            mock_co_cls.return_value = mock_co
+
+            mock_user = AsyncMock()
+            mock_user_cls.return_value = mock_user
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.post(
+                    "/v1/onboarding/complete",
+                    json={},
+                    headers=_make_jwt_header(user_id),
+                )
+
+        assert response.status_code == 200
+        mock_co.get_membership.assert_awaited_once_with(user_id, company_id)
+        mock_co.add_membership.assert_awaited_once()
+
+    def test_complete_idempotent_admin_already_exists(self):
+        """POST /onboarding/complete does NOT create a duplicate if ADMIN membership already exists."""
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        completed_progress = _make_progress(
+            user_id=user_id,
+            completed_steps=["profile", "company", "invite"],
+            current_step="complete",
+            company_join_method="created",
+            company_id=company_id,
+            completed_at=now,
+        )
+        from tessera_core.domain.entities import CompanyMembership, CompanyRole
+        existing_membership = CompanyMembership(
+            user_id=user_id, company_id=company_id, role=CompanyRole.ADMIN
+        )
+
+        with (
+            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
+            patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
+            patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
+        ):
+            mock_session = AsyncMock()
+            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            mock_ob = AsyncMock()
+            mock_ob.complete = AsyncMock(return_value=completed_progress)
+            mock_ob_cls.return_value = mock_ob
+
+            mock_co = AsyncMock()
+            mock_co.get_membership = AsyncMock(return_value=existing_membership)
+            mock_co.add_membership = AsyncMock()
+            mock_co_cls.return_value = mock_co
+
+            mock_user = AsyncMock()
+            mock_user_cls.return_value = mock_user
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.post(
+                    "/v1/onboarding/complete",
+                    json={},
+                    headers=_make_jwt_header(user_id),
+                )
+
+        assert response.status_code == 200
+        mock_co.add_membership.assert_not_awaited()
+
+    def test_complete_does_not_assign_admin_for_joiner(self):
+        """POST /onboarding/complete does NOT assign admin when user joined (not created)."""
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        completed_progress = _make_progress(
+            user_id=user_id,
+            completed_steps=["profile", "company", "invite"],
+            current_step="complete",
+            company_join_method="joined",
+            company_id=company_id,
+            completed_at=now,
+        )
+
+        with (
+            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
+            patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
+            patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
+        ):
+            mock_session = AsyncMock()
+            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            mock_ob = AsyncMock()
+            mock_ob.complete = AsyncMock(return_value=completed_progress)
+            mock_ob_cls.return_value = mock_ob
+
+            mock_co = AsyncMock()
+            mock_co.get_membership = AsyncMock(return_value=None)
+            mock_co.add_membership = AsyncMock()
+            mock_co_cls.return_value = mock_co
+
+            mock_user = AsyncMock()
+            mock_user_cls.return_value = mock_user
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.post(
+                    "/v1/onboarding/complete",
+                    json={},
+                    headers=_make_jwt_header(user_id),
+                )
+
+        assert response.status_code == 200
+        mock_co.get_membership.assert_not_awaited()
+        mock_co.add_membership.assert_not_awaited()
+
+    def test_complete_no_company_join_method_safe(self):
+        """POST /onboarding/complete is safe when company_join_method and company_id are None."""
+        user_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        completed_progress = _make_progress(
+            user_id=user_id,
+            completed_steps=["profile"],
+            current_step="complete",
+            company_join_method=None,
+            company_id=None,
+            completed_at=now,
+        )
+
+        with (
+            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
+            patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
+            patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
+        ):
+            mock_session = AsyncMock()
+            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            mock_ob = AsyncMock()
+            mock_ob.complete = AsyncMock(return_value=completed_progress)
+            mock_ob_cls.return_value = mock_ob
+
+            mock_co = AsyncMock()
+            mock_co_cls.return_value = mock_co
+
+            mock_user = AsyncMock()
+            mock_user_cls.return_value = mock_user
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.post(
+                    "/v1/onboarding/complete",
+                    json={},
+                    headers=_make_jwt_header(user_id),
+                )
+
+        assert response.status_code == 200
+        mock_co.get_membership.assert_not_awaited()
+        mock_co.add_membership.assert_not_awaited()
+
+    def test_complete_does_not_assign_admin_on_other_company(self):
+        """Cross-tenant isolation: /onboarding/complete only targets progress.company_id (server-set).
+
+        A user whose onboarding progress records company_a_id cannot trigger
+        admin assignment on company_b_id — even if another company exists.
+        """
+        user_id = uuid.uuid4()
+        company_a_id = uuid.uuid4()
+        company_b_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        completed_progress = _make_progress(
+            user_id=user_id,
+            completed_steps=["profile", "company", "invite"],
+            current_step="complete",
+            company_join_method="created",
+            company_id=company_a_id,
+            completed_at=now,
+        )
+
+        with (
+            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
+            patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
+            patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
+        ):
+            mock_session = AsyncMock()
+            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            mock_ob = AsyncMock()
+            mock_ob.complete = AsyncMock(return_value=completed_progress)
+            mock_ob_cls.return_value = mock_ob
+
+            mock_co = AsyncMock()
+            mock_co.get_membership = AsyncMock(return_value=None)
+            mock_co.add_membership = AsyncMock()
+            mock_co_cls.return_value = mock_co
+
+            mock_user = AsyncMock()
+            mock_user_cls.return_value = mock_user
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.post(
+                    "/v1/onboarding/complete",
+                    json={},
+                    headers=_make_jwt_header(user_id),
+                )
+
+        assert response.status_code == 200
+        mock_co.get_membership.assert_awaited_once_with(user_id, company_a_id)
+        for call in mock_co.get_membership.await_args_list:
+            assert call.args[1] != company_b_id, (
+                f"get_membership was called with company_b_id={company_b_id} — cross-tenant leak"
+            )
+        for call in mock_co.add_membership.await_args_list:
+            membership_arg = call.args[0]
+            assert membership_arg.company_id != company_b_id, (
+                f"add_membership was called for company_b_id={company_b_id} — cross-tenant write"
+            )

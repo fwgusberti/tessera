@@ -938,6 +938,7 @@ def _onboarding_from_model(m: OnboardingProgressModel) -> OnboardingProgress:
         completed_steps=list(m.completed_steps or []),
         current_step=m.current_step,
         company_join_method=m.company_join_method,
+        company_id=m.company_id,
         completed_at=m.completed_at,
         created_at=m.created_at,
         updated_at=m.updated_at,
@@ -970,7 +971,11 @@ class SqlOnboardingRepository(OnboardingRepository):
         return _onboarding_from_model(model) if model else None
 
     async def advance_step(
-        self, user_id: UUID, next_step: str, company_join_method: str | None = None
+        self,
+        user_id: UUID,
+        next_step: str,
+        company_join_method: str | None = None,
+        company_id: UUID | None = None,
     ) -> OnboardingProgress:
         from datetime import datetime
 
@@ -990,6 +995,8 @@ class SqlOnboardingRepository(OnboardingRepository):
         model.updated_at = datetime.now(UTC)
         if company_join_method is not None:
             model.company_join_method = company_join_method
+        if company_id is not None:
+            model.company_id = company_id
 
         await self._session.flush()
         await self._session.refresh(model)
