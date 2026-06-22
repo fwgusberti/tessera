@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DB="postgresql+psycopg://tessera:tessera@localhost:5432/tessera"
 REDIS="redis://localhost:6379/0"
 HOST="${HOST:-localhost}"
+ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 
 # ── colors ────────────────────────────────────────────────────────────────────
 CY='\033[0;36m'   # api
@@ -54,8 +55,12 @@ echo -e "${CY}[api    ]${NC} Running migrations..."
 
 # ── services ──────────────────────────────────────────────────────────────────
 (cd "$ROOT/apps/api" && \
-  DATABASE_URL="$DB" REDIS_URL="$REDIS" SECRET_KEY=dev-secret-key \
+  DATABASE_URL="$DB" \
+  REDIS_URL="$REDIS" \
+  SECRET_KEY=dev-secret-key \
+  FRONTEND_URL=http://"$HOST":3000 \
   OLLAMA_BASE_URL=http://localhost:11434 \
+  ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   uv run uvicorn tessera_api.main:app --reload --host 0.0.0.0 --port 8000 2>&1 | prefix "$CY" "api") &
 PIDS+=($!)
 

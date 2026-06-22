@@ -4,14 +4,14 @@ ROOT  := $(shell pwd)
 DB    := postgresql+psycopg://tessera:tessera@localhost:5432/tessera
 REDIS := redis://localhost:6379/0
 HOST  ?= localhost
-ANTHROPIC_API_KEY ?= $(shell echo "$ANTHROPIC_API_KEY")
+ANTHROPIC_API_KEY ?= $(shell echo $ANTHROPIC_API_KEY)
 
 ## ── full stack ─────────────────────────────────────────────────────────────
 
 # Start infra + all services (Ctrl-C stops everything)
 # Override HOST to expose on your network: make dev HOST=192.168.0.8
 dev:
-	@HOST=$(HOST) bash scripts/dev.sh
+	HOST=$(HOST) ANTHROPIC_API_KEY=$(ANTHROPIC_API_KEY) bash scripts/dev.sh
 
 ## ── infrastructure ─────────────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ api:
 		DATABASE_URL=$(DB) REDIS_URL=$(REDIS) SECRET_KEY=dev-secret-key \
 		OLLAMA_BASE_URL=http://localhost:11434 \
 		ANTHROPIC_API_KEY=$(ANTHROPIC_API_KEY) \
-		FRONT_END_URL=http://$(HOST):3000 \
+		FRONTEND_URL=http://$(HOST):3000 \
 		uv run uvicorn tessera_api.main:app --reload --host 0.0.0.0 --port 8000
 
 workers:
