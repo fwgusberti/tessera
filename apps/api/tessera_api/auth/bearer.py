@@ -78,6 +78,17 @@ async def require_onboarding_complete(request: Request) -> None:
     except HTTPException:
         return  # No authenticated user — JWT/OIDC guard will handle 401
 
+    if "sub" not in user_info:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": {
+                    "code": "invalid_session",
+                    "message": "Incomplete session — re-authenticate",
+                }
+            },
+        )
+
     user_id = UUID(user_info["sub"])
 
     from tessera_api.adapters.database import get_db

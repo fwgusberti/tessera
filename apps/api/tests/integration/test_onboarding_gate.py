@@ -310,3 +310,92 @@ class TestOnboardingGateRegression:
 
         assert response.status_code == 403
         assert "onboarding_required" in str(response.json())
+
+
+class TestOnboardingGateIncompleteSession:
+    """Guard must handle sessions missing 'sub' gracefully (return 401, not 500)."""
+
+    def _encode_session_cookie(self, session_data: dict) -> str:
+        import base64
+        import json
+        from itsdangerous import TimestampSigner
+
+        signer = TimestampSigner("dev-secret-key-change-in-production")
+        data = base64.b64encode(json.dumps(session_data).encode()).decode()
+        return signer.sign(data).decode()
+
+    def test_incomplete_session_returns_401_not_500(self):
+        """A session cookie with active_company_id but no sub must yield HTTP 401, not 500."""
+        company_id = uuid.uuid4()
+        broken_session = {"user": {"active_company_id": str(company_id)}}
+        session_cookie = self._encode_session_cookie(broken_session)
+
+        from fastapi.testclient import TestClient
+        from tessera_api.main import app
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            client.cookies.set("session", session_cookie)
+            response = client.get(f"/v1/companies/{company_id}/join-requests")
+
+        assert response.status_code == 401, (
+            f"Expected 401, got {response.status_code}: {response.json()}"
+        )
+        body = response.json()
+        assert "invalid_session" in str(body), (
+            f"Expected 'invalid_session' error code, got: {body}"
+        )
+
+    def test_complete_session_after_activate_passes_guard(self):
+        """Session with sub (set by activate_company) must not crash on guarded routes (SC-001 regression)."""
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        now = datetime.now(UTC)
+
+        # Session with a complete identity (as set by the fixed activate_company endpoint)
+        complete_session = {
+            "user": {
+                "sub": str(user_id),
+                "email": "user@example.com",
+                "is_admin": False,
+                "active_company_id": str(company_id),
+            }
+        }
+        session_cookie = self._encode_session_cookie(complete_session)
+
+        progress = OnboardingProgress(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            completed_steps=["profile", "company"],
+            current_step="done",
+            company_join_method="created",
+            completed_at=datetime.now(UTC),
+            created_at=now,
+            updated_at=now,
+        )
+        mock_session_db = AsyncMock()
+        mock_db = MagicMock()
+        mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session_db)
+        mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_ob_cls = MagicMock()
+        mock_ob_instance = AsyncMock()
+        mock_ob_instance.get_by_user_id = AsyncMock(return_value=progress)
+        mock_ob_cls.return_value = mock_ob_instance
+
+        mock_company_repo = AsyncMock()
+        mock_company_repo.get_membership = AsyncMock(return_value=None)  # not a member → 403
+
+        with (
+            patch("tessera_api.adapters.database.get_db", mock_db),
+            patch("tessera_api.adapters.repo.SqlOnboardingRepository", mock_ob_cls),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_company_repo),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app, raise_server_exceptions=False) as client:
+                client.cookies.set("session", session_cookie)
+                response = client.get(f"/v1/companies/{company_id}/join-requests")
+
+        assert response.status_code != 500, (
+            f"Got 500 — KeyError: 'sub' regression: {response.json()}"
+        )

@@ -522,3 +522,124 @@ class TestActivateCompany:
                     )
 
         assert response.status_code == 403
+
+
+class TestActivateCompanySession:
+    """Verify that activate_company stores a complete identity in the session."""
+
+    def _decode_session_cookie(self, cookie_value: str) -> dict:
+        import base64
+        import json
+        from itsdangerous import TimestampSigner
+
+        signer = TimestampSigner("dev-secret-key-change-in-production")
+        raw = signer.unsign(cookie_value.encode(), max_age=None)
+        return json.loads(base64.b64decode(raw))
+
+    def _encode_session_cookie(self, session_data: dict) -> str:
+        import base64
+        import json
+        from itsdangerous import TimestampSigner
+
+        signer = TimestampSigner("dev-secret-key-change-in-production")
+        data = base64.b64encode(json.dumps(session_data).encode()).decode()
+        return signer.sign(data).decode()
+
+    def _make_db_mocks(self, user_id: uuid.UUID, company_id: uuid.UUID, now: datetime):
+        company = Company(
+            id=company_id, name="Session Test Corp", admin_user_id=user_id,
+            created_at=now, updated_at=now,
+        )
+        membership = CompanyMembership(
+            id=uuid.uuid4(), user_id=user_id, company_id=company_id,
+            role=CompanyRole.MEMBER, joined_at=now,
+        )
+        mock_session = AsyncMock()
+        mock_get_db = MagicMock()
+        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_repo = AsyncMock()
+        mock_repo.get_by_id = AsyncMock(return_value=company)
+        mock_repo.get_membership = AsyncMock(return_value=membership)
+        mock_repo_cls = MagicMock(return_value=mock_repo)
+        return mock_get_db, mock_repo_cls
+
+    def test_jwt_user_activate_stores_complete_identity(self):
+        """JWT-only user activating a company gets sub, email, is_admin, and active_company_id in session."""
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        mock_get_db, mock_repo_cls = self._make_db_mocks(user_id, company_id, now)
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.companies.get_db", mock_get_db),
+                patch("tessera_api.routers.companies.SqlCompanyRepository", mock_repo_cls),
+            ):
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.post(
+                        f"/v1/companies/{company_id}/activate",
+                        headers=_make_jwt_header(user_id),
+                    )
+
+        assert response.status_code == 200
+
+        session_cookie = response.cookies.get("session")
+        assert session_cookie is not None, "No session cookie in response — session was not persisted"
+
+        session_data = self._decode_session_cookie(session_cookie)
+        user = session_data.get("user", {})
+
+        assert "sub" in user, f"Session user missing 'sub': {user}"
+        assert "email" in user, f"Session user missing 'email': {user}"
+        assert "is_admin" in user, f"Session user missing 'is_admin': {user}"
+        assert "active_company_id" in user, f"Session user missing 'active_company_id': {user}"
+        assert user["sub"] == str(user_id)
+        assert user["active_company_id"] == str(company_id)
+
+    def test_activate_company_preserves_existing_session_fields(self):
+        """Existing session with sub and extra fields is not overwritten; only active_company_id is added."""
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        mock_get_db, mock_repo_cls = self._make_db_mocks(user_id, company_id, now)
+
+        existing_session = {
+            "user": {
+                "sub": str(user_id),
+                "email": "existing@oidc.example.com",
+                "is_admin": True,
+                "name": "OIDC User",
+            }
+        }
+        original_cookie = self._encode_session_cookie(existing_session)
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.companies.get_db", mock_get_db),
+                patch("tessera_api.routers.companies.SqlCompanyRepository", mock_repo_cls),
+            ):
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    client.cookies.set("session", original_cookie)
+                    response = client.post(
+                        f"/v1/companies/{company_id}/activate",
+                        headers=_make_jwt_header(user_id),
+                    )
+
+        assert response.status_code == 200
+
+        # If session was modified, response has a new cookie; otherwise original is preserved
+        result_cookie = response.cookies.get("session") or original_cookie
+        session_data = self._decode_session_cookie(result_cookie)
+        user = session_data.get("user", {})
+
+        assert user.get("sub") == str(user_id), f"sub was overwritten: {user}"
+        assert user.get("email") == "existing@oidc.example.com", f"email was overwritten: {user}"
+        assert user.get("is_admin") is True, f"is_admin was overwritten: {user}"
+        assert user.get("name") == "OIDC User", f"extra OIDC field was lost: {user}"
