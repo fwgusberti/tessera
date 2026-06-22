@@ -146,6 +146,16 @@ async def create_company(body: CreateCompanyRequest, request: Request) -> dict:
             entity_id=company.id,
         )
 
+    from tessera_api.auth.jwt_auth import create_access_token
+
+    token = create_access_token(
+        user_id,
+        user_info.get("email", ""),
+        user_info.get("is_admin", False),
+        company_id=company.id,
+    )
+    request.session.setdefault("user", {})["active_company_id"] = str(company.id)
+
     return {
         "id": str(company.id),
         "name": company.name,
@@ -153,6 +163,7 @@ async def create_company(body: CreateCompanyRequest, request: Request) -> dict:
         "team_size": company.team_size,
         "role": membership.role.value,
         "created_at": company.created_at.isoformat() if company.created_at else None,
+        "token": token,
     }
 
 
@@ -665,3 +676,40 @@ async def verify_domain(token: str) -> Response:
             await domain_repo.mark_verified(UUID(policy_id))
 
     return RedirectResponse(url=f"{settings.frontend_url}/settings/domain?verified=true")
+
+
+@router.post("/companies/{company_id}/activate")
+async def activate_company(company_id: UUID, request: Request) -> dict:
+    """Issue a company-scoped JWT and set active_company_id in session."""
+    user_info = await require_user(request)
+    user_id = UUID(user_info["sub"])
+
+    async with get_db() as session:
+        repo = SqlCompanyRepository(session)
+        company = await repo.get_by_id(company_id)
+        if company is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": "not_found", "message": "Company not found"}},
+            )
+        membership = await repo.get_membership(user_id, company_id)
+        if membership is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": "forbidden", "message": "Not a member of this company"}},
+            )
+
+    from tessera_api.auth.jwt_auth import create_access_token
+
+    token = create_access_token(
+        user_id,
+        user_info.get("email", ""),
+        user_info.get("is_admin", False),
+        company_id=company_id,
+    )
+
+    if "user" not in request.session:
+        request.session["user"] = {}
+    request.session["user"]["active_company_id"] = str(company_id)
+
+    return {"token": token, "company_id": str(company_id), "company_name": company.name}

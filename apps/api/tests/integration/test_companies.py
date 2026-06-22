@@ -442,3 +442,83 @@ class TestGetMyCompaniesContract:
             response = client.get("/v1/companies/me")
 
         assert response.status_code == 401
+
+
+class TestActivateCompany:
+    def test_activate_returns_200_with_token_for_member(self):
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        now = datetime.now(UTC)
+
+        company = Company(
+            id=company_id, name="Acme Corp", admin_user_id=user_id,
+            created_at=now, updated_at=now,
+        )
+        membership = CompanyMembership(
+            id=uuid.uuid4(), user_id=user_id, company_id=company_id,
+            role=CompanyRole.MEMBER, joined_at=now,
+        )
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.companies.get_db") as mock_get_db,
+                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_repo_cls,
+            ):
+                session = AsyncMock()
+                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
+                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+                mock_repo = AsyncMock()
+                mock_repo.get_by_id = AsyncMock(return_value=company)
+                mock_repo.get_membership = AsyncMock(return_value=membership)
+                mock_repo_cls.return_value = mock_repo
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.post(
+                        f"/v1/companies/{company_id}/activate",
+                        headers=_make_jwt_header(user_id),
+                    )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "token" in body
+        assert body["company_id"] == str(company_id)
+        assert body["company_name"] == "Acme Corp"
+
+    def test_activate_returns_403_for_non_member(self):
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        now = datetime.now(UTC)
+
+        company = Company(
+            id=company_id, name="Other Corp", admin_user_id=uuid.uuid4(),
+            created_at=now, updated_at=now,
+        )
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.companies.get_db") as mock_get_db,
+                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_repo_cls,
+            ):
+                session = AsyncMock()
+                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
+                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+                mock_repo = AsyncMock()
+                mock_repo.get_by_id = AsyncMock(return_value=company)
+                mock_repo.get_membership = AsyncMock(return_value=None)
+                mock_repo_cls.return_value = mock_repo
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.post(
+                        f"/v1/companies/{company_id}/activate",
+                        headers=_make_jwt_header(user_id),
+                    )
+
+        assert response.status_code == 403

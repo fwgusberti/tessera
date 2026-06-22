@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 from tessera_api.adapters.audit import write_audit
 from tessera_api.adapters.database import get_db
 from tessera_api.adapters.repo import (
+    SqlCompanyRepository,
     SqlPasswordResetTokenRepository,
     SqlRefreshTokenRepository,
     SqlUserRepository,
@@ -186,8 +187,13 @@ async def login(body: LoginRequest) -> dict:
             entity_id=user.id,
         )
 
+        company_repo = SqlCompanyRepository(session)
+        memberships = await company_repo.list_memberships_for_user(user.id)
+
+    auto_company_id = memberships[0].company_id if len(memberships) == 1 else None
+
     settings = get_settings()
-    access_token = create_access_token(user.id, user.email, user.is_admin)
+    access_token = create_access_token(user.id, user.email, user.is_admin, company_id=auto_company_id)
 
     return {
         "access_token": access_token,

@@ -13,7 +13,7 @@ from tessera_api.routers.assistant import AnswerRequest
 
 
 def _make_chunk(score: float = 0.9) -> dict:
-    return {"id": "c1", "text": "Some document text.", "score": score, "document_version_id": "v1"}
+    return {"id": "c1", "text": "Some document text.", "score": score, "document_id": "d1", "document_version_id": "v1"}
 
 
 def _make_llm(captured: list) -> MagicMock:

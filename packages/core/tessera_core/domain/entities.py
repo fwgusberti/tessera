@@ -52,6 +52,7 @@ class Space(BaseModel):
     slug: str
     name: str
     sector: str
+    company_id: UUID | None = None
     taxonomy: dict[str, Any] = Field(default_factory=dict)
     retention_policy: dict[str, Any] = Field(default_factory=dict)
     confidence_threshold: float = 0.7

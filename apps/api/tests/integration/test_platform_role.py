@@ -156,14 +156,17 @@ class TestPlatformRoleEndpoint:
                 "tessera_api.routers.members.SqlSpaceMembershipRepository"
             ) as mock_membership_cls,
             patch(
-                "tessera_api.routers.members.require_user",
+                "tessera_api.routers.members.require_company_context",
                 new=AsyncMock(
-                    return_value={
-                        "id": str(global_admin_id),
-                        "sub": str(global_admin_id),
-                        "is_admin": True,
-                    }
+                    return_value=(
+                        {"id": str(global_admin_id), "sub": str(global_admin_id), "is_admin": True},
+                        uuid.uuid4(),
+                    )
                 ),
+            ),
+            patch(
+                "tessera_api.routers.members.validate_space_for_company",
+                new=AsyncMock(return_value=None),
             ),
         ):
             session = AsyncMock()

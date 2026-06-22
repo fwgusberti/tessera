@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -9,12 +10,26 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
+from tessera_api.adapters.audit import write_audit
+from tessera_api.adapters.celery import get_celery_app
+from tessera_api.adapters.database import get_db
+from tessera_api.adapters.repo import (
+    SqlDocumentRepository,
+    SqlDocumentVersionRepository,
+    SqlSpaceMembershipRepository,
+    SqlSpaceRepository,
+    SqlUserRepository,
+)
+from tessera_api.auth.oidc import require_company_context
 from tessera_core.domain.entities import (
     Confidentiality,
     Document,
     DocumentLifecycleState,
     DocumentVersion,
 )
+from tessera_core.permissions.access import can_write_document
+from tessera_core.services.lifecycle import assign_owner
+from tessera_core.services.lifecycle import publish_document as lifecycle_publish
 
 router = APIRouter(tags=["documents"])
 
@@ -35,61 +50,68 @@ async def list_documents(
     state: str | None = Query(None),  # noqa: B008
     request: Request = None,
 ) -> dict:
-    from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.repo import (
-        SqlDocumentRepository,
-        SqlSpaceRepository,
-        SqlUserRepository,
-    )
-    from tessera_api.auth.oidc import require_user
-
-    user_info = await require_user(request)
+    user_info, company_id = await require_company_context(request)
     async with get_db() as session:
         doc_repo = SqlDocumentRepository(session)
+        space_repo = SqlSpaceRepository(session)
         state_enum = DocumentLifecycleState(state) if state else None
+
         if space_id:
+            space = await space_repo.get_by_id_for_company(space_id, company_id)
+            if space is None:
+                actor_id = UUID(user_info.get("sub", ""))
+                await write_audit(
+                    session,
+                    actor_type="user",
+                    actor_id=actor_id,
+                    action="cross_tenant_denied",
+                    entity_type="space",
+                    entity_id=space_id,
+                    metadata={"company_id": str(company_id)},
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={"error": {"code": "forbidden", "message": "Access denied"}},
+                )
             docs = await doc_repo.list_by_space(space_id, state_enum)
         else:
-            user_repo = SqlUserRepository(session)
-            space_repo = SqlSpaceRepository(session)
-            user = await user_repo.get_by_subject(user_info["sub"])
-            if user is None:
-                import contextlib
+            company_spaces = await space_repo.list_by_company(company_id)
+            space_ids = [s.id for s in company_spaces]
+            docs = await doc_repo.list_by_space_ids_for_company(space_ids, company_id, state_enum)
 
-                with contextlib.suppress(ValueError, KeyError):
-                    user = await user_repo.get_by_id(UUID(user_info["sub"]))
-            if user is None:
-                docs = []
-            else:
-                spaces = await space_repo.list_for_user(user)
-                space_ids = [s.id for s in spaces]
-                docs = await doc_repo.list_by_space_ids(space_ids, state_enum)
     return {"documents": [d.model_dump() for d in docs]}
 
 
 @router.post("/documents", status_code=status.HTTP_201_CREATED)
 async def create_document(body: CreateDocumentRequest, request: Request) -> dict:
-    from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.repo import (
-        SqlDocumentRepository,
-        SqlDocumentVersionRepository,
-        SqlSpaceMembershipRepository,
-        SqlUserRepository,
-    )
-    from tessera_api.auth.oidc import require_user
-    from tessera_core.permissions.access import can_write_document
-
-    user_info = await require_user(request)
+    user_info, company_id = await require_company_context(request)
     user_id_str = user_info.get("id") or user_info.get("sub")
     owner_id = UUID(user_id_str) if user_id_str else None
+
     async with get_db() as session:
+        space_repo = SqlSpaceRepository(session)
+        space = await space_repo.get_by_id_for_company(body.space_id, company_id)
+        if space is None:
+            actor_id = UUID(user_info.get("sub", "")) if owner_id is None else owner_id
+            await write_audit(
+                session,
+                actor_type="user",
+                actor_id=actor_id,
+                action="cross_tenant_denied",
+                entity_type="space",
+                entity_id=body.space_id,
+                metadata={"company_id": str(company_id)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": "forbidden", "message": "Access denied"}},
+            )
+
         user_repo = SqlUserRepository(session)
         actor = await user_repo.get_by_id(owner_id) if owner_id else None
         if actor is None:
-            try:
+            with contextlib.suppress(Exception):
                 actor = await user_repo.get_by_subject(user_info.get("sub", ""))
-            except Exception:
-                pass
 
         if actor is not None:
             membership_repo = SqlSpaceMembershipRepository(session)
@@ -127,18 +149,27 @@ async def create_document(body: CreateDocumentRequest, request: Request) -> dict
 
 @router.get("/documents/{document_id}")
 async def get_document(document_id: UUID, request: Request) -> dict:
-    from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.repo import SqlDocumentRepository, SqlDocumentVersionRepository
-    from tessera_api.auth.oidc import require_user
-
-    await require_user(request)
+    user_info, company_id = await require_company_context(request)
     async with get_db() as session:
         doc_repo = SqlDocumentRepository(session)
         ver_repo = SqlDocumentVersionRepository(session)
 
-        doc = await doc_repo.get_by_id(document_id)
+        doc = await doc_repo.get_by_id_for_company(document_id, company_id)
         if doc is None:
-            raise HTTPException(status_code=404)
+            actor_id = UUID(user_info["sub"])
+            await write_audit(
+                session,
+                actor_type="user",
+                actor_id=actor_id,
+                action="cross_tenant_denied",
+                entity_type="document",
+                entity_id=document_id,
+                metadata={"company_id": str(company_id)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": "forbidden", "message": "Access denied"}},
+            )
 
         version = None
         if doc.current_version_id:
@@ -152,12 +183,25 @@ async def get_document(document_id: UUID, request: Request) -> dict:
 
 @router.get("/documents/{document_id}/versions")
 async def list_versions(document_id: UUID, request: Request) -> dict:
-    from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.repo import SqlDocumentVersionRepository
-    from tessera_api.auth.oidc import require_user
-
-    await require_user(request)
+    user_info, company_id = await require_company_context(request)
     async with get_db() as session:
+        doc_repo = SqlDocumentRepository(session)
+        doc = await doc_repo.get_by_id_for_company(document_id, company_id)
+        if doc is None:
+            actor_id = UUID(user_info["sub"])
+            await write_audit(
+                session,
+                actor_type="user",
+                actor_id=actor_id,
+                action="cross_tenant_denied",
+                entity_type="document",
+                entity_id=document_id,
+                metadata={"company_id": str(company_id)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": "forbidden", "message": "Access denied"}},
+            )
         repo = SqlDocumentVersionRepository(session)
         versions = await repo.list_by_document(document_id)
     return {"versions": [v.model_dump() for v in versions]}
@@ -165,29 +209,32 @@ async def list_versions(document_id: UUID, request: Request) -> dict:
 
 @router.post("/documents/{document_id}/publish")
 async def publish_document(document_id: UUID, request: Request) -> dict:
-    from tessera_api.adapters.audit import write_audit
-    from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.repo import (
-        SqlDocumentRepository,
-        SqlDocumentVersionRepository,
-    )
-    from tessera_api.auth.oidc import require_user
-    from tessera_core.services.lifecycle import publish_document as lifecycle_publish
-
-    user_info = await require_user(request)
+    user_info, company_id = await require_company_context(request)
     user_id_str = user_info.get("id") or user_info.get("sub")
     publisher_id = UUID(user_id_str) if user_id_str else None
+
     async with get_db() as session:
         doc_repo = SqlDocumentRepository(session)
         ver_repo = SqlDocumentVersionRepository(session)
 
-        doc = await doc_repo.get_by_id(document_id)
+        doc = await doc_repo.get_by_id_for_company(document_id, company_id)
         if doc is None:
-            raise HTTPException(status_code=404)
+            actor_id = publisher_id or UUID(user_info["sub"])
+            await write_audit(
+                session,
+                actor_type="user",
+                actor_id=actor_id,
+                action="cross_tenant_denied",
+                entity_type="document",
+                entity_id=document_id,
+                metadata={"company_id": str(company_id)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": "forbidden", "message": "Access denied"}},
+            )
 
         if doc.owner_user_id is None and publisher_id:
-            from tessera_core.services.lifecycle import assign_owner
-
             doc = assign_owner(doc, publisher_id)
             await doc_repo.set_owner(document_id, publisher_id)
 
@@ -200,7 +247,6 @@ async def publish_document(document_id: UUID, request: Request) -> dict:
 
         await ver_repo.update_approval(latest.id, publisher_id, now)
 
-        # Transition document state
         updated = lifecycle_publish(doc, version_id=latest.id, approver_id=publisher_id)
         await doc_repo.update_state(document_id, updated.state)
         await doc_repo.set_current_version(document_id, latest.id)
@@ -214,8 +260,6 @@ async def publish_document(document_id: UUID, request: Request) -> dict:
             entity_id=document_id,
         )
 
-    from tessera_api.adapters.celery import get_celery_app
-
     get_celery_app().send_task(
         "tessera.index_document_version",
         args=[str(latest.id), str(document_id), str(doc.space_id)],
@@ -226,12 +270,7 @@ async def publish_document(document_id: UUID, request: Request) -> dict:
 
 @router.post("/documents/{document_id}/reindex")
 async def reindex_document(document_id: UUID, request: Request) -> dict:
-    from tessera_api.adapters.celery import get_celery_app
-    from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.repo import SqlDocumentRepository, SqlDocumentVersionRepository
-    from tessera_api.auth.oidc import require_user
-
-    user_info = await require_user(request)
+    user_info, company_id = await require_company_context(request)
     user_id_str = user_info.get("id") or user_info.get("sub")
     user_id = UUID(user_id_str) if user_id_str else None
     is_admin = user_info.get("is_admin", False)
@@ -240,9 +279,22 @@ async def reindex_document(document_id: UUID, request: Request) -> dict:
         doc_repo = SqlDocumentRepository(session)
         ver_repo = SqlDocumentVersionRepository(session)
 
-        doc = await doc_repo.get_by_id(document_id)
+        doc = await doc_repo.get_by_id_for_company(document_id, company_id)
         if doc is None:
-            raise HTTPException(status_code=404)
+            actor_id = user_id or UUID(user_info["sub"])
+            await write_audit(
+                session,
+                actor_type="user",
+                actor_id=actor_id,
+                action="cross_tenant_denied",
+                entity_type="document",
+                entity_id=document_id,
+                metadata={"company_id": str(company_id)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": "forbidden", "message": "Access denied"}},
+            )
 
         if not is_admin and doc.owner_user_id != user_id:
             raise HTTPException(

@@ -8,6 +8,14 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from tessera_api.adapters.database import get_db
+from tessera_api.adapters.embeddings import OllamaEmbeddingProvider
+from tessera_api.adapters.repo import SqlSpaceRepository
+from tessera_api.auth.oidc import require_company_context
+from tessera_api.rag.citations import build_citation
+from tessera_api.rag.retrieval import SearchResult, acl_first_search
+from tessera_core.domain.entities import Confidentiality
+
 router = APIRouter(tags=["search"])
 
 
@@ -20,15 +28,8 @@ class SearchRequest(BaseModel):
 
 @router.post("/search")
 async def search(body: SearchRequest, request: Request) -> dict:
-    from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.embeddings import OllamaEmbeddingProvider
-    from tessera_api.adapters.repo import SqlSpaceRepository
-    from tessera_api.auth.oidc import require_user
-    from tessera_api.rag.citations import build_citation
-    from tessera_api.rag.retrieval import SearchResult, acl_first_search
-    from tessera_core.domain.entities import Confidentiality
+    _, company_id = await require_company_context(request)
 
-    await require_user(request)
     embedding_provider = OllamaEmbeddingProvider()
     try:
         embeddings = await embedding_provider.embed([body.query])
@@ -38,11 +39,14 @@ async def search(body: SearchRequest, request: Request) -> dict:
 
     async with get_db() as session:
         space_repo = SqlSpaceRepository(session)
-        all_spaces = await space_repo.list_all()
-        allowed_space_ids = [s.id for s in all_spaces]
+        company_spaces = await space_repo.list_by_company(company_id)
+        allowed_space_ids = [s.id for s in company_spaces]
 
-        requested_space_ids = body.space_ids or allowed_space_ids
-        effective_space_ids = [sid for sid in requested_space_ids if sid in set(allowed_space_ids)]
+        if body.space_ids:
+            allowed_set = set(allowed_space_ids)
+            effective_space_ids = [sid for sid in body.space_ids if sid in allowed_set]
+        else:
+            effective_space_ids = allowed_space_ids
 
         raw_results = await acl_first_search(
             query_embedding=query_embedding,

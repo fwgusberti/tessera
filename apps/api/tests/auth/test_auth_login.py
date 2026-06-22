@@ -36,6 +36,7 @@ class TestLogin:
             patch("tessera_api.routers.auth.get_db") as mock_get_db,
             patch("tessera_api.routers.auth.SqlUserRepository") as mock_user_repo_cls,
             patch("tessera_api.routers.auth.SqlRefreshTokenRepository") as mock_rt_repo_cls,
+            patch("tessera_api.routers.auth.SqlCompanyRepository") as mock_company_repo_cls,
             patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
         ):
             mock_session = AsyncMock()
@@ -51,6 +52,10 @@ class TestLogin:
             mock_rt_repo = AsyncMock()
             mock_rt_repo.create = AsyncMock(return_value=stored_token)
             mock_rt_repo_cls.return_value = mock_rt_repo
+
+            mock_company_repo = AsyncMock()
+            mock_company_repo.list_memberships_for_user = AsyncMock(return_value=[])
+            mock_company_repo_cls.return_value = mock_company_repo
 
             from fastapi.testclient import TestClient
             from tessera_api.main import app

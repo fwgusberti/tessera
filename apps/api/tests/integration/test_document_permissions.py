@@ -113,22 +113,31 @@ class TestEditorCanCreateDocument:
         mock_ver_repo = AsyncMock()
         mock_ver_repo.create.return_value = version
 
+        mock_space_repo = AsyncMock()
+        mock_space_repo.get_by_id_for_company = AsyncMock(
+            return_value=type("Space", (), {"id": space_id})()
+        )
+
         with (
-            patch("tessera_api.adapters.database.get_db", _mock_db),
-            patch("tessera_api.adapters.repo.SqlUserRepository", return_value=mock_user_repo),
+            patch("tessera_api.routers.documents.get_db", _mock_db),
+            patch("tessera_api.routers.documents.SqlUserRepository", return_value=mock_user_repo),
             patch(
-                "tessera_api.adapters.repo.SqlSpaceMembershipRepository",
+                "tessera_api.routers.documents.SqlSpaceMembershipRepository",
                 return_value=mock_membership_repo,
             ),
-            patch("tessera_api.adapters.repo.SqlDocumentRepository", return_value=mock_doc_repo),
+            patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
             patch(
-                "tessera_api.adapters.repo.SqlDocumentVersionRepository",
+                "tessera_api.routers.documents.SqlDocumentVersionRepository",
                 return_value=mock_ver_repo,
             ),
+            patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
             patch(
-                "tessera_api.auth.oidc.require_user",
+                "tessera_api.routers.documents.require_company_context",
                 new=AsyncMock(
-                    return_value={"id": str(editor_id), "sub": str(editor_id), "is_admin": False}
+                    return_value=(
+                        {"id": str(editor_id), "sub": str(editor_id), "is_admin": False},
+                        uuid.uuid4(),
+                    )
                 ),
             ),
         ):
@@ -162,17 +171,26 @@ class TestViewerCannotCreateDocument:
             _membership(space_id, viewer_id, SpaceRole.VIEWER)
         ]
 
+        mock_space_repo = AsyncMock()
+        mock_space_repo.get_by_id_for_company = AsyncMock(
+            return_value=type("Space", (), {"id": space_id})()
+        )
+
         with (
-            patch("tessera_api.adapters.database.get_db", _mock_db),
-            patch("tessera_api.adapters.repo.SqlUserRepository", return_value=mock_user_repo),
+            patch("tessera_api.routers.documents.get_db", _mock_db),
+            patch("tessera_api.routers.documents.SqlUserRepository", return_value=mock_user_repo),
             patch(
-                "tessera_api.adapters.repo.SqlSpaceMembershipRepository",
+                "tessera_api.routers.documents.SqlSpaceMembershipRepository",
                 return_value=mock_membership_repo,
             ),
+            patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
             patch(
-                "tessera_api.auth.oidc.require_user",
+                "tessera_api.routers.documents.require_company_context",
                 new=AsyncMock(
-                    return_value={"id": str(viewer_id), "sub": str(viewer_id), "is_admin": False}
+                    return_value=(
+                        {"id": str(viewer_id), "sub": str(viewer_id), "is_admin": False},
+                        uuid.uuid4(),
+                    )
                 ),
             ),
         ):
@@ -200,22 +218,25 @@ class TestViewerCanReadDocument:
         version = _make_version(doc_id, version_id)
 
         mock_doc_repo = AsyncMock()
-        mock_doc_repo.get_by_id.return_value = doc
+        mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=doc)
 
         mock_ver_repo = AsyncMock()
         mock_ver_repo.get_by_id.return_value = version
 
         with (
-            patch("tessera_api.adapters.database.get_db", _mock_db),
-            patch("tessera_api.adapters.repo.SqlDocumentRepository", return_value=mock_doc_repo),
+            patch("tessera_api.routers.documents.get_db", _mock_db),
+            patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
             patch(
-                "tessera_api.adapters.repo.SqlDocumentVersionRepository",
+                "tessera_api.routers.documents.SqlDocumentVersionRepository",
                 return_value=mock_ver_repo,
             ),
             patch(
-                "tessera_api.auth.oidc.require_user",
+                "tessera_api.routers.documents.require_company_context",
                 new=AsyncMock(
-                    return_value={"id": str(viewer_id), "sub": str(viewer_id), "is_admin": False}
+                    return_value=(
+                        {"id": str(viewer_id), "sub": str(viewer_id), "is_admin": False},
+                        uuid.uuid4(),
+                    )
                 ),
             ),
         ):

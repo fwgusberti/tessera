@@ -24,6 +24,7 @@ def _signing_key() -> OctKey:
 # Password helpers
 # ---------------------------------------------------------------------------
 
+
 def hash_password(plain: str) -> str:
     return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
 
@@ -36,7 +37,10 @@ def verify_password(plain: str, hashed: str) -> bool:
 # Access token (JWT)
 # ---------------------------------------------------------------------------
 
-def create_access_token(user_id: UUID, email: str, is_admin: bool) -> str:
+
+def create_access_token(
+    user_id: UUID, email: str, is_admin: bool, company_id: UUID | None = None
+) -> str:
     settings = get_settings()
     now = datetime.now(UTC)
     exp = now + timedelta(minutes=settings.jwt_access_token_expire_minutes)
@@ -48,6 +52,8 @@ def create_access_token(user_id: UUID, email: str, is_admin: bool) -> str:
         "exp": int(exp.timestamp()),
         "jti": str(uuid.uuid4()),
     }
+    if company_id is not None:
+        claims["company_id"] = str(company_id)
     header = {"alg": settings.jwt_algorithm, "typ": "JWT"}
     key = _signing_key()
     token_obj = jwt.encode(header, claims, key)
@@ -68,6 +74,7 @@ def verify_access_token(token: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Refresh token (opaque random)
 # ---------------------------------------------------------------------------
+
 
 def create_refresh_token() -> str:
     """Return a cryptographically random, URL-safe refresh token string."""

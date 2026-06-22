@@ -40,6 +40,21 @@ class TestSpace:
         assert space.default_language == "pt-BR"
         assert isinstance(space.id, uuid.UUID)
 
+    def test_space_accepts_company_id(self):
+        company_id = uuid.uuid4()
+        space = Space(
+            slug="engineering",
+            name="Engineering",
+            sector="engineering",
+            company_id=company_id,
+        )
+        assert space.company_id == company_id
+
+    def test_space_company_id_is_uuid(self):
+        company_id = uuid.uuid4()
+        space = Space(slug="eng", name="Eng", sector="eng", company_id=company_id)
+        assert isinstance(space.company_id, uuid.UUID)
+
 
 class TestDocument:
     def test_document_defaults(self):

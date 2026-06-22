@@ -29,10 +29,12 @@ def _user_info():
     return {"sub": uid, "id": uid, "email": "test@test.com", "is_admin": False}
 
 
-def _auth_patch():
+def _company_context_patch():
+    info = _user_info()
+    company_id = uuid.uuid4()
     return patch(
-        "tessera_api.auth.oidc.require_user",
-        new=AsyncMock(return_value=_user_info()),
+        "tessera_api.routers.search.require_company_context",
+        new=AsyncMock(return_value=(info, company_id)),
     )
 
 
@@ -40,15 +42,15 @@ def _empty_db_patches():
     """Patch get_db + SqlSpaceRepository to return an empty space list."""
     mock_session = AsyncMock()
     mock_space_repo = MagicMock()
-    mock_space_repo.list_all = AsyncMock(return_value=[])
+    mock_space_repo.list_by_company = AsyncMock(return_value=[])
 
     @asynccontextmanager
     async def _fake_get_db():
         yield mock_session
 
     return (
-        patch("tessera_api.adapters.database.get_db", _fake_get_db),
-        patch("tessera_api.adapters.repo.SqlSpaceRepository", return_value=mock_space_repo),
+        patch("tessera_api.routers.search.get_db", _fake_get_db),
+        patch("tessera_api.routers.search.SqlSpaceRepository", return_value=mock_space_repo),
     )
 
 
@@ -60,7 +62,7 @@ def test_search_returns_503_when_ollama_raises_http_status_error():
     db1, db2 = _empty_db_patches()
 
     with (
-        _auth_patch(),
+        _company_context_patch(),
         db1,
         db2,
         patch(
@@ -86,7 +88,7 @@ def test_search_returns_503_when_ollama_raises_connect_error():
     db1, db2 = _empty_db_patches()
 
     with (
-        _auth_patch(),
+        _company_context_patch(),
         db1,
         db2,
         patch(
@@ -108,7 +110,7 @@ def test_search_returns_200_with_empty_results_when_no_chunks_match():
     db1, db2 = _empty_db_patches()
 
     with (
-        _auth_patch(),
+        _company_context_patch(),
         db1,
         db2,
         patch(
@@ -116,7 +118,7 @@ def test_search_returns_200_with_empty_results_when_no_chunks_match():
             new=AsyncMock(return_value=[[0.1] * 768]),
         ),
         patch(
-            "tessera_api.rag.retrieval.acl_first_search",
+            "tessera_api.routers.search.acl_first_search",
             new=AsyncMock(return_value=[]),
         ),
     ):

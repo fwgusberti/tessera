@@ -88,6 +88,21 @@ class TestAccessToken:
         assert c1["jti"] != c2["jti"]
 
 
+class TestAccessTokenCompanyId:
+    def test_create_token_with_company_id_embeds_claim(self):
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        token = create_access_token(user_id, "alice@example.com", False, company_id=company_id)
+        claims = verify_access_token(token)
+        assert claims["company_id"] == str(company_id)
+
+    def test_create_token_without_company_id_has_no_claim(self):
+        user_id = uuid.uuid4()
+        token = create_access_token(user_id, "alice@example.com", False)
+        claims = verify_access_token(token)
+        assert "company_id" not in claims
+
+
 class TestRefreshToken:
     def test_create_refresh_token_is_url_safe_string(self):
         token = create_refresh_token()

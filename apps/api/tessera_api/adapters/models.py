@@ -59,6 +59,12 @@ class SpaceModel(Base):
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     sector: Mapped[str] = mapped_column(String(100), nullable=False)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     taxonomy: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     retention_policy: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     confidence_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)

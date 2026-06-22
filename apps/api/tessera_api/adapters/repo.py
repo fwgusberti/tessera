@@ -87,6 +87,7 @@ def _space_from_model(m: SpaceModel) -> Space:
         slug=m.slug,
         name=m.name,
         sector=m.sector,
+        company_id=m.company_id,
         taxonomy=m.taxonomy or {},
         retention_policy=m.retention_policy or {},
         confidence_threshold=m.confidence_threshold,
@@ -222,6 +223,7 @@ class SqlSpaceRepository(SpaceRepository):
             slug=space.slug,
             name=space.name,
             sector=space.sector,
+            company_id=space.company_id,
             taxonomy=space.taxonomy,
             retention_policy=space.retention_policy,
             confidence_threshold=space.confidence_threshold,
@@ -236,8 +238,24 @@ class SqlSpaceRepository(SpaceRepository):
         model = result.scalar_one_or_none()
         return _space_from_model(model) if model else None
 
+    async def get_by_id_for_company(self, space_id: UUID, company_id: UUID) -> Space | None:
+        result = await self._session.execute(
+            select(SpaceModel).where(
+                SpaceModel.id == space_id,
+                SpaceModel.company_id == company_id,
+            )
+        )
+        model = result.scalar_one_or_none()
+        return _space_from_model(model) if model else None
+
     async def list_all(self) -> list[Space]:
         result = await self._session.execute(select(SpaceModel))
+        return [_space_from_model(m) for m in result.scalars().all()]
+
+    async def list_by_company(self, company_id: UUID) -> list[Space]:
+        result = await self._session.execute(
+            select(SpaceModel).where(SpaceModel.company_id == company_id)
+        )
         return [_space_from_model(m) for m in result.scalars().all()]
 
     async def list_for_user(self, user: User) -> list[Space]:
@@ -309,12 +327,42 @@ class SqlDocumentRepository(DocumentRepository):
         result = await self._session.execute(q)
         return [_doc_from_model(m) for m in result.scalars().all()]
 
+    async def get_by_id_for_company(self, document_id: UUID, company_id: UUID) -> Document | None:
+        result = await self._session.execute(
+            select(DocumentModel)
+            .join(SpaceModel, SpaceModel.id == DocumentModel.space_id)
+            .where(DocumentModel.id == document_id, SpaceModel.company_id == company_id)
+        )
+        model = result.scalar_one_or_none()
+        return _doc_from_model(model) if model else None
+
     async def list_by_space_ids(
         self, space_ids: list[UUID], state: DocumentLifecycleState | None = None
     ) -> list[Document]:
         if not space_ids:
             return []
         q = select(DocumentModel).where(DocumentModel.space_id.in_(space_ids))
+        if state:
+            q = q.where(DocumentModel.state == state.value)
+        result = await self._session.execute(q)
+        return [_doc_from_model(m) for m in result.scalars().all()]
+
+    async def list_by_space_ids_for_company(
+        self,
+        space_ids: list[UUID],
+        company_id: UUID,
+        state: DocumentLifecycleState | None = None,
+    ) -> list[Document]:
+        if not space_ids:
+            return []
+        q = (
+            select(DocumentModel)
+            .join(SpaceModel, SpaceModel.id == DocumentModel.space_id)
+            .where(
+                DocumentModel.space_id.in_(space_ids),
+                SpaceModel.company_id == company_id,
+            )
+        )
         if state:
             q = q.where(DocumentModel.state == state.value)
         result = await self._session.execute(q)

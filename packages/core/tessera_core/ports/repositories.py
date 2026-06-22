@@ -38,7 +38,13 @@ class SpaceRepository(ABC):
     async def get_by_id(self, space_id: UUID) -> Space | None: ...
 
     @abstractmethod
+    async def get_by_id_for_company(self, space_id: UUID, company_id: UUID) -> Space | None: ...
+
+    @abstractmethod
     async def list_all(self) -> list[Space]: ...
+
+    @abstractmethod
+    async def list_by_company(self, company_id: UUID) -> list[Space]: ...
 
     @abstractmethod
     async def list_for_user(self, user: User) -> list[Space]: ...
@@ -58,6 +64,9 @@ class DocumentRepository(ABC):
     async def get_by_id(self, document_id: UUID) -> Document | None: ...
 
     @abstractmethod
+    async def get_by_id_for_company(self, document_id: UUID, company_id: UUID) -> Document | None: ...
+
+    @abstractmethod
     async def list_by_space(
         self, space_id: UUID, state: DocumentLifecycleState | None = None
     ) -> list[Document]: ...
@@ -66,6 +75,14 @@ class DocumentRepository(ABC):
     async def list_by_space_ids(
         self,
         space_ids: list[UUID],
+        state: DocumentLifecycleState | None = None,
+    ) -> list[Document]: ...
+
+    @abstractmethod
+    async def list_by_space_ids_for_company(
+        self,
+        space_ids: list[UUID],
+        company_id: UUID,
         state: DocumentLifecycleState | None = None,
     ) -> list[Document]: ...
 

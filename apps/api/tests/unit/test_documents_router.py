@@ -24,9 +24,10 @@ def _make_app():
 
 def _auth_patch(user_id: str | None = None):
     uid = user_id or str(uuid.uuid4())
+    info = {"sub": uid, "id": uid, "email": "test@test.com", "is_admin": False}
     return patch(
-        "tessera_api.auth.oidc.require_user",
-        new=AsyncMock(return_value={"sub": uid, "id": uid, "email": "test@test.com", "is_admin": False}),
+        "tessera_api.routers.documents.require_company_context",
+        new=AsyncMock(return_value=(info, uuid.uuid4())),
     )
 
 
@@ -69,7 +70,7 @@ def test_publish_dispatches_index_task():
     version = _build_version(version_id, doc_id)
 
     mock_doc_repo = MagicMock()
-    mock_doc_repo.get_by_id = AsyncMock(return_value=doc)
+    mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=doc)
     mock_doc_repo.set_owner = AsyncMock(return_value=doc)
     mock_doc_repo.update_state = AsyncMock(return_value=doc)
     mock_doc_repo.set_current_version = AsyncMock(return_value=doc)
@@ -88,12 +89,12 @@ def test_publish_dispatches_index_task():
 
     with (
         _auth_patch(),
-        patch("tessera_api.adapters.database.get_db", _fake_get_db),
-        patch("tessera_api.adapters.repo.SqlDocumentRepository", return_value=mock_doc_repo),
-        patch("tessera_api.adapters.repo.SqlDocumentVersionRepository", return_value=mock_ver_repo),
-        patch("tessera_api.adapters.audit.write_audit", new=AsyncMock()),
+        patch("tessera_api.routers.documents.get_db", _fake_get_db),
+        patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
+        patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
+        patch("tessera_api.routers.documents.write_audit", new=AsyncMock()),
         patch(
-            "tessera_api.adapters.celery.get_celery_app",
+            "tessera_api.routers.documents.get_celery_app",
             return_value=MagicMock(send_task=mock_delay),
         ),
     ):

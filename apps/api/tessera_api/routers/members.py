@@ -14,7 +14,8 @@ from tessera_api.adapters.repo import (
     SqlSpaceMembershipRepository,
     SqlUserRepository,
 )
-from tessera_api.auth.oidc import require_user
+from tessera_api.auth.oidc import require_company_context, require_user
+from tessera_api.routers.spaces import validate_space_for_company
 from tessera_core.domain.entities import SpaceRole
 from tessera_core.permissions.access import can_read_space_document
 from tessera_core.services.membership import MembershipService
@@ -61,7 +62,10 @@ async def invite_member(space_id: UUID, body: InviteMemberRequest, request: Requ
 
 @router.get("/spaces/{space_id}/members")
 async def list_members(space_id: UUID, request: Request) -> dict:
-    user_info = await require_user(request)
+    user_info, company_id = await require_company_context(request)
+
+    await validate_space_for_company(space_id, company_id)
+
     actor_id = UUID(user_info.get("id") or user_info.get("sub"))
 
     async with get_db() as session:

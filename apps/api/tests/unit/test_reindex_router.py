@@ -24,11 +24,18 @@ def _make_app():
 
 def _auth_patch(user_id: str | None = None, is_admin: bool = False):
     uid = user_id or str(uuid.uuid4())
+    info = {"sub": uid, "id": uid, "email": "test@test.com", "is_admin": is_admin}
+    return patch(
+        "tessera_api.routers.documents.require_company_context",
+        new=AsyncMock(return_value=(info, uuid.uuid4())),
+    )
+
+
+def _admin_auth_patch(user_id: str | None = None, is_admin: bool = False):
+    uid = user_id or str(uuid.uuid4())
     return patch(
         "tessera_api.auth.oidc.require_user",
-        new=AsyncMock(
-            return_value={"sub": uid, "id": uid, "email": "test@test.com", "is_admin": is_admin}
-        ),
+        new=AsyncMock(return_value={"sub": uid, "id": uid, "email": "test@test.com", "is_admin": is_admin}),
     )
 
 
@@ -88,7 +95,7 @@ def test_reindex_owner_dispatches_task():
     version = _build_version(version_id, doc_id)
 
     mock_doc_repo = MagicMock()
-    mock_doc_repo.get_by_id = AsyncMock(return_value=doc)
+    mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=doc)
     mock_ver_repo = MagicMock()
     mock_ver_repo.list_by_document = AsyncMock(return_value=[version])
     mock_session = AsyncMock()
@@ -101,11 +108,11 @@ def test_reindex_owner_dispatches_task():
 
     with (
         _auth_patch(user_id=str(owner_id), is_admin=False),
-        patch("tessera_api.adapters.database.get_db", _fake_get_db),
-        patch("tessera_api.adapters.repo.SqlDocumentRepository", return_value=mock_doc_repo),
-        patch("tessera_api.adapters.repo.SqlDocumentVersionRepository", return_value=mock_ver_repo),
+        patch("tessera_api.routers.documents.get_db", _fake_get_db),
+        patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
+        patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
         patch(
-            "tessera_api.adapters.celery.get_celery_app",
+            "tessera_api.routers.documents.get_celery_app",
             return_value=MagicMock(send_task=mock_send_task),
         ),
     ):
@@ -136,7 +143,7 @@ def test_reindex_admin_dispatches_task():
     version = _build_version(version_id, doc_id)
 
     mock_doc_repo = MagicMock()
-    mock_doc_repo.get_by_id = AsyncMock(return_value=doc)
+    mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=doc)
     mock_ver_repo = MagicMock()
     mock_ver_repo.list_by_document = AsyncMock(return_value=[version])
     mock_session = AsyncMock()
@@ -149,11 +156,11 @@ def test_reindex_admin_dispatches_task():
 
     with (
         _auth_patch(user_id=str(admin_id), is_admin=True),
-        patch("tessera_api.adapters.database.get_db", _fake_get_db),
-        patch("tessera_api.adapters.repo.SqlDocumentRepository", return_value=mock_doc_repo),
-        patch("tessera_api.adapters.repo.SqlDocumentVersionRepository", return_value=mock_ver_repo),
+        patch("tessera_api.routers.documents.get_db", _fake_get_db),
+        patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
+        patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
         patch(
-            "tessera_api.adapters.celery.get_celery_app",
+            "tessera_api.routers.documents.get_celery_app",
             return_value=MagicMock(send_task=mock_send_task),
         ),
     ):
@@ -178,7 +185,7 @@ def test_reindex_non_owner_returns_403():
     doc = _build_published_doc(doc_id, space_id, owner_id, version_id)
 
     mock_doc_repo = MagicMock()
-    mock_doc_repo.get_by_id = AsyncMock(return_value=doc)
+    mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=doc)
     mock_session = AsyncMock()
 
     @asynccontextmanager
@@ -187,9 +194,9 @@ def test_reindex_non_owner_returns_403():
 
     with (
         _auth_patch(user_id=str(other_id), is_admin=False),
-        patch("tessera_api.adapters.database.get_db", _fake_get_db),
-        patch("tessera_api.adapters.repo.SqlDocumentRepository", return_value=mock_doc_repo),
-        patch("tessera_api.adapters.repo.SqlDocumentVersionRepository", return_value=MagicMock()),
+        patch("tessera_api.routers.documents.get_db", _fake_get_db),
+        patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
+        patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=MagicMock()),
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
             response = client.post(f"/v1/documents/{doc_id}/reindex")
@@ -197,15 +204,15 @@ def test_reindex_non_owner_returns_403():
     assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text}"
 
 
-# ── T011: missing document returns 404 ───────────────────────────────────────
+# ── T011: missing document returns 403 (hides existence) ─────────────────────
 
 def test_reindex_missing_document_returns_404():
-    """Reindexing a document that does not exist returns 404."""
+    """Reindexing a document not found in the company scope returns 403 (hides existence)."""
     app = _make_app()
     doc_id = uuid.uuid4()
 
     mock_doc_repo = MagicMock()
-    mock_doc_repo.get_by_id = AsyncMock(return_value=None)
+    mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=None)
     mock_session = AsyncMock()
 
     @asynccontextmanager
@@ -214,14 +221,14 @@ def test_reindex_missing_document_returns_404():
 
     with (
         _auth_patch(is_admin=True),
-        patch("tessera_api.adapters.database.get_db", _fake_get_db),
-        patch("tessera_api.adapters.repo.SqlDocumentRepository", return_value=mock_doc_repo),
-        patch("tessera_api.adapters.repo.SqlDocumentVersionRepository", return_value=MagicMock()),
+        patch("tessera_api.routers.documents.get_db", _fake_get_db),
+        patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
+        patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=MagicMock()),
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
             response = client.post(f"/v1/documents/{doc_id}/reindex")
 
-    assert response.status_code == 404, f"Expected 404, got {response.status_code}: {response.text}"
+    assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text}"
 
 
 # ── T012: draft document returns 400 ─────────────────────────────────────────
@@ -237,7 +244,7 @@ def test_reindex_draft_document_returns_400():
     doc = _build_draft_doc(doc_id, space_id, owner_id, version_id)
 
     mock_doc_repo = MagicMock()
-    mock_doc_repo.get_by_id = AsyncMock(return_value=doc)
+    mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=doc)
     mock_session = AsyncMock()
 
     @asynccontextmanager
@@ -246,9 +253,9 @@ def test_reindex_draft_document_returns_400():
 
     with (
         _auth_patch(user_id=str(owner_id), is_admin=False),
-        patch("tessera_api.adapters.database.get_db", _fake_get_db),
-        patch("tessera_api.adapters.repo.SqlDocumentRepository", return_value=mock_doc_repo),
-        patch("tessera_api.adapters.repo.SqlDocumentVersionRepository", return_value=MagicMock()),
+        patch("tessera_api.routers.documents.get_db", _fake_get_db),
+        patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
+        patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=MagicMock()),
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
             response = client.post(f"/v1/documents/{doc_id}/reindex")
@@ -284,7 +291,7 @@ def test_bulk_reindex_admin_dispatches_for_unchunked_docs():
     mock_send_task = MagicMock()
 
     with (
-        _auth_patch(is_admin=True),
+        _admin_auth_patch(is_admin=True),
         patch("tessera_api.adapters.database.get_db", _fake_get_db),
         patch(
             "tessera_api.adapters.celery.get_celery_app",
@@ -306,7 +313,7 @@ def test_bulk_reindex_non_admin_returns_403():
     app = _make_app()
 
     with (
-        _auth_patch(is_admin=False),
+        _admin_auth_patch(is_admin=False),
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
             response = client.post("/v1/admin/reindex")
@@ -332,7 +339,7 @@ def test_bulk_reindex_skips_docs_with_existing_chunks():
     mock_send_task = MagicMock()
 
     with (
-        _auth_patch(is_admin=True),
+        _admin_auth_patch(is_admin=True),
         patch("tessera_api.adapters.database.get_db", _fake_get_db),
         patch(
             "tessera_api.adapters.celery.get_celery_app",

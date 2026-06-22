@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from typing import Annotated, Any
+from uuid import UUID
 
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from fastapi import Depends, HTTPException, Request, status
 
+from tessera_api.adapters.database import get_db
+from tessera_api.adapters.repo import SqlCompanyRepository
 from tessera_api.config import get_settings
 
 
@@ -75,3 +78,53 @@ async def require_user(request: Request) -> dict[str, Any]:
 
 
 CurrentUser = Annotated[dict[str, Any], Depends(require_user)]
+
+
+async def require_company_context(request: Request) -> tuple[dict[str, Any], UUID]:
+    """Returns (user_info, company_id). Raises 401 if unauthenticated, 403 if no company context."""
+    user_info = await require_user(request)
+    company_id: UUID | None = None
+
+    # 1. Try JWT claim
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[len("Bearer ") :]
+        try:
+            from tessera_api.auth.jwt_auth import verify_access_token
+
+            claims = verify_access_token(token)
+            if "company_id" in claims:
+                company_id = UUID(claims["company_id"])
+        except Exception:
+            pass
+
+    # 2. Try session cookie
+    if company_id is None:
+        active = request.session.get("user", {}).get("active_company_id")
+        if active:
+            company_id = UUID(str(active))
+
+    if company_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {"code": "no_company_context", "message": "No active company context"}
+            },
+        )
+
+    # 3. Verify membership is still active in the DB
+    user_id = UUID(user_info["sub"])
+    async with get_db() as session:
+        repo = SqlCompanyRepository(session)
+        membership = await repo.get_membership(user_id, company_id)
+
+    if membership is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": "forbidden", "message": "Membership revoked or not found"}},
+        )
+
+    return user_info, company_id
+
+
+CompanyContext = Annotated[tuple[dict[str, Any], Any], Depends(require_company_context)]
