@@ -40,7 +40,27 @@ export default function MessageBubble({ turn }: MessageBubbleProps) {
                   )}
                 </p>
               ) : (
-                <p className="whitespace-pre-wrap">{turn.answer.answer}</p>
+                <>
+                  <p className="whitespace-pre-wrap">{turn.answer.answer}</p>
+                  {turn.answer.citations && turn.answer.citations.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-xs text-slate-400 mt-2">Sources</p>
+                      <div className="flex flex-col gap-1">
+                        {turn.answer.citations.map((c) => (
+                          <a
+                            key={c.chunk_id}
+                            href={`/documents/${c.document_id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-indigo-600 hover:underline"
+                          >
+                            {c.quote.slice(0, 80)}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}

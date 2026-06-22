@@ -97,6 +97,7 @@ export type PasswordStrength = "weak" | "medium" | "strong";
 
 export interface Citation {
   chunk_id: string;
+  document_id: string;
   document_version_id: string;
   quote: string;
   score: number;

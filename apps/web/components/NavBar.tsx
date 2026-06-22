@@ -50,11 +50,20 @@ export function NavBar() {
         </a>
         {/* Desktop nav links */}
         <div className="hidden md:flex items-center gap-4">
+          <a
+            href="/"
+            className={`text-sm ${pathname === "/" ? "text-indigo-600 font-medium" : "text-slate-600"} hover:text-slate-900`}
+          >
+            Chat
+          </a>
+          <a
+            href="/documents"
+            className={`text-sm ${pathname?.startsWith("/documents") ? "text-indigo-600 font-medium" : "text-slate-600"} hover:text-slate-900`}
+          >
+            Documents
+          </a>
           <a href="/search" className="text-sm text-slate-600 hover:text-slate-900">
             Search
-          </a>
-          <a href="/documents" className="text-sm text-slate-600 hover:text-slate-900">
-            Documents
           </a>
           <a href="/proposals" className="text-sm text-slate-600 hover:text-slate-900">
             Proposals
@@ -114,18 +123,25 @@ export function NavBar() {
           <div className="relative z-20 border-t border-slate-100 mt-2 pb-2 bg-white">
             <div className="flex flex-col">
               <a
+                href="/"
+                onClick={() => setIsMenuOpen(false)}
+                className={`px-2 py-3 text-sm ${pathname === "/" ? "text-indigo-600 font-medium" : "text-slate-600"} hover:text-slate-900 hover:bg-slate-50`}
+              >
+                Chat
+              </a>
+              <a
+                href="/documents"
+                onClick={() => setIsMenuOpen(false)}
+                className={`px-2 py-3 text-sm ${pathname?.startsWith("/documents") ? "text-indigo-600 font-medium" : "text-slate-600"} hover:text-slate-900 hover:bg-slate-50`}
+              >
+                Documents
+              </a>
+              <a
                 href="/search"
                 onClick={() => setIsMenuOpen(false)}
                 className="px-2 py-3 text-sm text-slate-600 hover:text-slate-900 hover:bg-slate-50"
               >
                 Search
-              </a>
-              <a
-                href="/documents"
-                onClick={() => setIsMenuOpen(false)}
-                className="px-2 py-3 text-sm text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-              >
-                Documents
               </a>
               <a
                 href="/proposals"

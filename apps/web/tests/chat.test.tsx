@@ -42,9 +42,14 @@ describe("ChatInterface — US1: Ask a Question", () => {
     expect(screen.getByRole("button", { name: /ask/i })).toBeInTheDocument();
   });
 
-  it("shows empty-state prompt when no turns exist", () => {
+  it("shows welcome heading when no turns exist", () => {
     render(<ChatInterface />);
-    expect(screen.getByText(/ask a question/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /tessera/i })).toBeInTheDocument();
+  });
+
+  it("shows tagline when no turns exist", () => {
+    render(<ChatInterface />);
+    expect(screen.getByText(/your knowledge, always answered/i)).toBeInTheDocument();
   });
 
   it("calls askAssistant with the typed question on form submit", async () => {
@@ -88,12 +93,11 @@ describe("ChatInterface — US1: Ask a Question", () => {
     mockAskAssistant.mockResolvedValueOnce(fakeAnswer);
     render(<ChatInterface />);
 
-    const input = screen.getByRole("textbox");
-    fireEvent.change(input, { target: { value: "My question" } });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "My question" } });
     fireEvent.click(screen.getByRole("button", { name: /ask/i }));
 
     await waitFor(() => {
-      expect((input as HTMLTextAreaElement).value).toBe("");
+      expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
     });
   });
 });
@@ -167,7 +171,7 @@ describe("ChatInterface — US2: Conversational Follow-Up", () => {
     fireEvent.click(screen.getByRole("button", { name: /new conversation/i }));
 
     expect(screen.queryByText("The answer to your question.")).toBeNull();
-    expect(screen.getByText(/ask a question/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /tessera/i })).toBeInTheDocument();
   });
 });
 
@@ -217,6 +221,183 @@ describe("ChatInterface — US3: Empty and Error States", () => {
 
     await waitFor(() => {
       expect((input as HTMLTextAreaElement).value).toBe("My failed question");
+    });
+  });
+});
+
+// ─── T005: Conversation View (US2 new layout tests) ──────────────────────────
+
+describe("conversation view", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("renders a MessageBubble element for a completed turn", async () => {
+    mockAskAssistant.mockResolvedValueOnce(fakeAnswer);
+    render(<ChatInterface />);
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "A question" } });
+    fireEvent.click(screen.getByRole("button", { name: /ask/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("The answer to your question.")).toBeInTheDocument();
+    });
+  });
+
+  it("shows New conversation button when turns exist", async () => {
+    mockAskAssistant.mockResolvedValueOnce(fakeAnswer);
+    render(<ChatInterface />);
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "A question" } });
+    fireEvent.click(screen.getByRole("button", { name: /ask/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /new conversation/i })).toBeInTheDocument();
+    });
+  });
+
+  it("Ask button is still present in conversation view", async () => {
+    mockAskAssistant.mockResolvedValueOnce(fakeAnswer);
+    render(<ChatInterface />);
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "A question" } });
+    fireEvent.click(screen.getByRole("button", { name: /ask/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /ask/i })).toBeInTheDocument();
+    });
+  });
+});
+
+// ─── US3 (feature 027): Citation document links in MessageBubble ─────────────
+
+import MessageBubble from "@/components/chat/MessageBubble";
+import type { ChatTurn } from "@/lib/types";
+
+const completeTurnWithCitations: ChatTurn = {
+  id: "t1",
+  question: "What is the policy?",
+  status: "complete",
+  answer: {
+    answer: "Here is the answer.",
+    confidence: 0.9,
+    dont_know: false,
+    citations: [
+      {
+        chunk_id: "c1",
+        document_id: "doc-001",
+        document_version_id: "v1",
+        quote: "This is the first citation quote text that is more than 80 chars long for testing purposes here.",
+        score: 0.85,
+      },
+      {
+        chunk_id: "c2",
+        document_id: "doc-002",
+        document_version_id: "v2",
+        quote: "Second citation quote.",
+        score: 0.75,
+      },
+    ],
+  },
+};
+
+describe("MessageBubble — US3: citation document links", () => {
+  it("renders Sources heading when answer is complete with citations", () => {
+    render(<MessageBubble turn={completeTurnWithCitations} />);
+    expect(screen.getByText("Sources")).toBeInTheDocument();
+  });
+
+  it("renders one link per citation", () => {
+    render(<MessageBubble turn={completeTurnWithCitations} />);
+    const links = screen.getAllByRole("link");
+    expect(links).toHaveLength(2);
+  });
+
+  it("each citation link has correct href to /documents/{document_id}", () => {
+    render(<MessageBubble turn={completeTurnWithCitations} />);
+    const links = screen.getAllByRole("link");
+    expect(links[0]).toHaveAttribute("href", "/documents/doc-001");
+    expect(links[1]).toHaveAttribute("href", "/documents/doc-002");
+  });
+
+  it("each citation link opens in a new tab", () => {
+    render(<MessageBubble turn={completeTurnWithCitations} />);
+    const links = screen.getAllByRole("link");
+    expect(links[0]).toHaveAttribute("target", "_blank");
+    expect(links[1]).toHaveAttribute("target", "_blank");
+  });
+
+  it("does not render Sources section when dont_know is true", () => {
+    const dontKnowTurn: ChatTurn = {
+      ...completeTurnWithCitations,
+      answer: { ...completeTurnWithCitations.answer!, dont_know: true },
+    };
+    render(<MessageBubble turn={dontKnowTurn} />);
+    expect(screen.queryByText("Sources")).not.toBeInTheDocument();
+  });
+
+  it("does not render Sources section when citations array is empty", () => {
+    const noSourcesTurn: ChatTurn = {
+      ...completeTurnWithCitations,
+      answer: { ...completeTurnWithCitations.answer!, citations: [] },
+    };
+    render(<MessageBubble turn={noSourcesTurn} />);
+    expect(screen.queryByText("Sources")).not.toBeInTheDocument();
+  });
+
+  it("does not render Sources section when citations is absent", () => {
+    const noSourcesTurn: ChatTurn = {
+      ...completeTurnWithCitations,
+      answer: { answer: "No citations here.", confidence: 0.9, dont_know: false },
+    };
+    render(<MessageBubble turn={noSourcesTurn} />);
+    expect(screen.queryByText("Sources")).not.toBeInTheDocument();
+  });
+
+  it("does not render Sources section when status is pending", () => {
+    const pendingTurn: ChatTurn = {
+      ...completeTurnWithCitations,
+      status: "pending",
+      answer: null,
+    };
+    render(<MessageBubble turn={pendingTurn} />);
+    expect(screen.queryByText("Sources")).not.toBeInTheDocument();
+  });
+});
+
+// ─── T007: Starter Prompts (US3) ─────────────────────────────────────────────
+
+describe("starter prompts", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("renders 4 starter prompt chips on the welcome screen", () => {
+    render(<ChatInterface />);
+    expect(screen.getByText("What's in our product roadmap?")).toBeInTheDocument();
+    const chips = screen.getAllByRole("button").filter(
+      (btn) => btn.textContent !== "Ask" && btn.textContent !== "New conversation"
+    );
+    expect(chips).toHaveLength(4);
+  });
+
+  it("clicking a chip populates the textarea with that chip text", () => {
+    render(<ChatInterface />);
+    fireEvent.click(screen.getByText("What's in our product roadmap?"));
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+      "What's in our product roadmap?"
+    );
+  });
+
+  it("does not render chips when turns exist", async () => {
+    mockAskAssistant.mockResolvedValueOnce(fakeAnswer);
+    render(<ChatInterface />);
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "A question" } });
+    fireEvent.click(screen.getByRole("button", { name: /ask/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("What's in our product roadmap?")).toBeNull();
     });
   });
 });
