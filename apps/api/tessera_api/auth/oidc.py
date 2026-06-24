@@ -11,6 +11,7 @@ from fastapi import Depends, HTTPException, Request, status
 from tessera_api.adapters.database import get_db
 from tessera_api.adapters.repo import SqlCompanyRepository
 from tessera_api.config import get_settings
+from tessera_core.domain.entities import CompanyMembership, CompanyRole
 
 
 def get_login_url(request: Request, state: str) -> str:
@@ -80,8 +81,14 @@ async def require_user(request: Request) -> dict[str, Any]:
 CurrentUser = Annotated[dict[str, Any], Depends(require_user)]
 
 
-async def require_company_context(request: Request) -> tuple[dict[str, Any], UUID]:
-    """Returns (user_info, company_id). Raises 401 if unauthenticated, 403 if no company context."""
+async def _resolve_company_membership(
+    request: Request,
+) -> tuple[dict[str, Any], UUID, CompanyMembership]:
+    """Resolve (user_info, company_id, membership) from the request.
+
+    Raises 401 if unauthenticated, 403 if there is no active company context, and
+    403 if the caller's membership in that company is revoked or missing.
+    """
     user_info = await require_user(request)
     company_id: UUID | None = None
 
@@ -124,7 +131,32 @@ async def require_company_context(request: Request) -> tuple[dict[str, Any], UUI
             detail={"error": {"code": "forbidden", "message": "Membership revoked or not found"}},
         )
 
+    return user_info, company_id, membership
+
+
+async def require_company_context(request: Request) -> tuple[dict[str, Any], UUID]:
+    """Returns (user_info, company_id). Raises 401 if unauthenticated, 403 if no company context."""
+    user_info, company_id, _ = await _resolve_company_membership(request)
     return user_info, company_id
 
 
+async def require_company_admin(
+    request: Request,
+) -> tuple[dict[str, Any], UUID, CompanyMembership]:
+    """Returns (user_info, company_id, membership), requiring CompanyRole.ADMIN in the active company.
+
+    Raises 403 with the generic body when the caller is not an admin of the active
+    company. The global ``is_admin`` JWT flag is NOT consulted here — per-company
+    admin authority comes only from the CompanyMembership role.
+    """
+    user_info, company_id, membership = await _resolve_company_membership(request)
+    if membership.role != CompanyRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": "forbidden", "message": "Access denied"}},
+        )
+    return user_info, company_id, membership
+
+
 CompanyContext = Annotated[tuple[dict[str, Any], Any], Depends(require_company_context)]
+CompanyAdminContext = Annotated[tuple[dict[str, Any], Any, Any], Depends(require_company_admin)]

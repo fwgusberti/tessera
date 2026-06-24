@@ -48,8 +48,17 @@ class TestInviteMemberContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_user",
-                new=AsyncMock(return_value={"sub": str(actor_id), "is_admin": False}),
+                "tessera_api.routers.members.require_company_context",
+                new=AsyncMock(
+                    return_value=(
+                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
+                        uuid.uuid4(),
+                    )
+                ),
+            ),
+            patch(
+                "tessera_api.routers.members._require_space_in_company",
+                new=AsyncMock(return_value=None),
             ),
             patch("tessera_api.routers.members.get_db") as mock_get_db,
             patch(
@@ -96,8 +105,17 @@ class TestInviteMemberContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_user",
-                new=AsyncMock(return_value={"sub": str(actor_id), "is_admin": False}),
+                "tessera_api.routers.members.require_company_context",
+                new=AsyncMock(
+                    return_value=(
+                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
+                        uuid.uuid4(),
+                    )
+                ),
+            ),
+            patch(
+                "tessera_api.routers.members._require_space_in_company",
+                new=AsyncMock(return_value=None),
             ),
             patch("tessera_api.routers.members.get_db") as mock_get_db,
             patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
@@ -179,8 +197,17 @@ class TestGetMyMembershipContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_user",
-                new=AsyncMock(return_value={"sub": str(actor_id), "is_admin": False}),
+                "tessera_api.routers.members.require_company_context",
+                new=AsyncMock(
+                    return_value=(
+                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
+                        uuid.uuid4(),
+                    )
+                ),
+            ),
+            patch(
+                "tessera_api.routers.members._require_space_in_company",
+                new=AsyncMock(return_value=None),
             ),
             patch("tessera_api.routers.members.get_db") as mock_get_db,
             patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
@@ -215,8 +242,17 @@ class TestGetMyMembershipContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_user",
-                new=AsyncMock(return_value={"sub": str(actor_id), "is_admin": False}),
+                "tessera_api.routers.members.require_company_context",
+                new=AsyncMock(
+                    return_value=(
+                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
+                        uuid.uuid4(),
+                    )
+                ),
+            ),
+            patch(
+                "tessera_api.routers.members._require_space_in_company",
+                new=AsyncMock(return_value=None),
             ),
             patch("tessera_api.routers.members.get_db") as mock_get_db,
             patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
@@ -258,8 +294,17 @@ class TestChangeRoleContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_user",
-                new=AsyncMock(return_value={"sub": str(actor_id), "is_admin": False}),
+                "tessera_api.routers.members.require_company_context",
+                new=AsyncMock(
+                    return_value=(
+                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
+                        uuid.uuid4(),
+                    )
+                ),
+            ),
+            patch(
+                "tessera_api.routers.members._require_space_in_company",
+                new=AsyncMock(return_value=None),
             ),
             patch("tessera_api.routers.members.get_db") as mock_get_db,
             patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
@@ -298,8 +343,17 @@ class TestChangeRoleContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_user",
-                new=AsyncMock(return_value={"sub": str(actor_id), "is_admin": False}),
+                "tessera_api.routers.members.require_company_context",
+                new=AsyncMock(
+                    return_value=(
+                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
+                        uuid.uuid4(),
+                    )
+                ),
+            ),
+            patch(
+                "tessera_api.routers.members._require_space_in_company",
+                new=AsyncMock(return_value=None),
             ),
             patch("tessera_api.routers.members.get_db") as mock_get_db,
             patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
@@ -341,8 +395,17 @@ class TestRemoveMemberContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_user",
-                new=AsyncMock(return_value={"sub": str(actor_id), "is_admin": False}),
+                "tessera_api.routers.members.require_company_context",
+                new=AsyncMock(
+                    return_value=(
+                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
+                        uuid.uuid4(),
+                    )
+                ),
+            ),
+            patch(
+                "tessera_api.routers.members._require_space_in_company",
+                new=AsyncMock(return_value=None),
             ),
             patch("tessera_api.routers.members.get_db") as mock_get_db,
             patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,

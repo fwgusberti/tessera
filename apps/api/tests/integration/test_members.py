@@ -5,20 +5,38 @@ from __future__ import annotations
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from tessera_core.domain.entities import (
+    CompanyMembership,
+    CompanyRole,
+    Space,
     SpaceMembership,
     SpaceRole,
     User,
 )
 
+# Shared company that owns the spaces under test; member-write paths are now
+# company-scoped (feature 035), so tokens carry this company and the auth layer
+# resolves a membership for it.
+COMPANY_ID = uuid.uuid4()
 
-def _make_jwt_header(user_id: uuid.UUID, is_admin: bool = False) -> dict:
+
+def _make_jwt_header(
+    user_id: uuid.UUID, is_admin: bool = False, company_id: uuid.UUID = COMPANY_ID
+) -> dict:
     from tessera_api.auth.jwt_auth import create_access_token
 
-    token = create_access_token(user_id, "actor@example.com", is_admin)
+    token = create_access_token(user_id, "actor@example.com", is_admin, company_id=company_id)
     return {"Authorization": f"Bearer {token}"}
+
+
+def _mock_db():
+    m = MagicMock()
+    s = AsyncMock()
+    m.return_value.__aenter__ = AsyncMock(return_value=s)
+    m.return_value.__aexit__ = AsyncMock(return_value=None)
+    return m
 
 
 def _make_user(user_id: uuid.UUID | None = None, is_admin: bool = False) -> User:
@@ -51,6 +69,42 @@ def _bypass_onboarding_guard():
         app.dependency_overrides.pop(require_onboarding_complete, None)
 
 
+@contextmanager
+def _member_write_auth():
+    """Bypass onboarding + satisfy company context + in-company space for member writes.
+
+    Patches the auth-layer membership lookup (MEMBER role is enough; the per-space
+    role rule is what these tests exercise) and the space-ownership check so the
+    handler proceeds to ``MembershipService``.
+    """
+    now = datetime.now(UTC)
+
+    def _ms(uid, cid):
+        return CompanyMembership(
+            id=uuid.uuid4(),
+            user_id=uid,
+            company_id=cid,
+            role=CompanyRole.MEMBER,
+            joined_at=now,
+        )
+
+    company_repo = AsyncMock()
+    company_repo.get_membership = AsyncMock(side_effect=_ms)
+
+    space_repo = AsyncMock()
+    space_repo.get_by_id_for_company = AsyncMock(
+        return_value=Space(slug="s", name="S", sector="x", company_id=COMPANY_ID)
+    )
+
+    with (
+        _bypass_onboarding_guard(),
+        patch("tessera_api.auth.oidc.get_db", _mock_db()),
+        patch("tessera_api.auth.oidc.SqlCompanyRepository", return_value=company_repo),
+        patch("tessera_api.routers.members.SqlSpaceRepository", return_value=space_repo),
+    ):
+        yield
+
+
 class TestInviteMemberIntegration:
     def test_admin_can_invite_member(self):
         from fastapi.testclient import TestClient
@@ -65,7 +119,7 @@ class TestInviteMemberIntegration:
             update={"invited_by_user_id": actor_id}
         )
 
-        with _bypass_onboarding_guard():
+        with _member_write_auth():
             with (
                 patch("tessera_api.routers.members.get_db") as mock_get_db,
                 patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
@@ -112,7 +166,7 @@ class TestInviteMemberIntegration:
         actor_id = uuid.uuid4()
         actor = _make_user(actor_id)
 
-        with _bypass_onboarding_guard():
+        with _member_write_auth():
             with (
                 patch("tessera_api.routers.members.get_db") as mock_get_db,
                 patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
@@ -157,7 +211,7 @@ class TestChangeRoleIntegration:
         actor = _make_user(actor_id)
         updated = _membership(space_id, target_id, SpaceRole.EDITOR)
 
-        with _bypass_onboarding_guard():
+        with _member_write_auth():
             with (
                 patch("tessera_api.routers.members.get_db") as mock_get_db,
                 patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
@@ -205,7 +259,7 @@ class TestChangeRoleIntegration:
         target_id = uuid.uuid4()
         actor = _make_user(actor_id)
 
-        with _bypass_onboarding_guard():
+        with _member_write_auth():
             with (
                 patch("tessera_api.routers.members.get_db") as mock_get_db,
                 patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
@@ -251,7 +305,7 @@ class TestRemoveMemberIntegration:
         target_id = uuid.uuid4()
         actor = _make_user(actor_id)
 
-        with _bypass_onboarding_guard():
+        with _member_write_auth():
             with (
                 patch("tessera_api.routers.members.get_db") as mock_get_db,
                 patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,

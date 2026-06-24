@@ -1,12 +1,37 @@
-"""Proposal review endpoints: list, get, approve, reject."""
+"""Proposal review endpoints: list, get, approve, reject.
+
+All handlers are scoped to the active company (feature 035): a proposal is only
+reachable when its document's space belongs to the caller's active company. A
+cross-company access is audited as ``cross_tenant_denied`` and returns the same
+generic 403 body as a missing proposal (indistinguishable — FR-010 / SC-005).
+"""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel
+
+from tessera_api.adapters.audit import write_audit
+from tessera_api.adapters.database import get_db
+from tessera_api.adapters.repo import (
+    SqlDocumentRepository,
+    SqlDocumentVersionRepository,
+    SqlProposalRepository,
+    SqlSpaceRepository,
+    SqlUserRepository,
+)
+from tessera_api.auth.oidc import require_company_context
+from tessera_core.domain.entities import DocumentLifecycleState, DocumentVersion
+from tessera_core.permissions.access import (
+    AccessContext,
+    AccessDecision,
+    can_approve_proposal,
+)
+from tessera_core.services.proposals import approve_proposal as svc_approve
+from tessera_core.services.proposals import reject_proposal as svc_reject
 
 router = APIRouter(tags=["proposals"])
 
@@ -15,52 +40,52 @@ class RejectRequest(BaseModel):
     reason: str | None = None
 
 
+def _forbidden() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"error": {"code": "forbidden", "message": "Access denied"}},
+    )
+
+
+async def _audit_cross_tenant_denied(actor_id: UUID, proposal_id: UUID, company_id: UUID) -> None:
+    async with get_db() as audit_session:
+        await write_audit(
+            audit_session,
+            actor_type="user",
+            actor_id=actor_id,
+            action="cross_tenant_denied",
+            entity_type="proposal",
+            entity_id=proposal_id,
+            metadata={"company_id": str(company_id)},
+        )
+
+
 @router.get("/proposals")
 async def list_proposals(
-    state: str | None = Query(None),
-    space_id: UUID | None = Query(None),
+    state: str | None = Query(None),  # noqa: B008
+    space_id: UUID | None = Query(None),  # noqa: B008
     request: Request = None,
 ) -> dict:
-    from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.repo import SqlProposalRepository, SqlDocumentRepository
-    from tessera_api.auth.oidc import require_user
-
-    await require_user(request)
+    _user_info, company_id = await require_company_context(request)
     async with get_db() as session:
-        # If space_id given, list proposals for docs in that space
-        from sqlalchemy import select
-        from tessera_api.adapters.models import UpdateProposalModel, DocumentModel
-
-        q = select(UpdateProposalModel)
-        if state:
-            q = q.where(UpdateProposalModel.state == state)
-        if space_id:
-            q = q.join(DocumentModel, DocumentModel.id == UpdateProposalModel.document_id).where(
-                DocumentModel.space_id == space_id
-            )
-        result = await session.execute(q)
-        from tessera_api.adapters.repo import _proposal_from_model
-
-        proposals = [_proposal_from_model(m) for m in result.scalars().all()]
+        repo = SqlProposalRepository(session)
+        proposals = await repo.list_for_company(company_id, state=state, space_id=space_id)
     return {"proposals": [p.model_dump() for p in proposals]}
 
 
 @router.get("/proposals/{proposal_id}")
 async def get_proposal(proposal_id: UUID, request: Request) -> dict:
-    from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.repo import SqlProposalRepository, SqlDocumentRepository, SqlDocumentVersionRepository
-    from tessera_api.auth.oidc import require_user
-
-    await require_user(request)
+    user_info, company_id = await require_company_context(request)
     async with get_db() as session:
         proposal_repo = SqlProposalRepository(session)
         doc_repo = SqlDocumentRepository(session)
 
-        proposal = await proposal_repo.get_by_id(proposal_id)
+        proposal = await proposal_repo.get_by_id_for_company(proposal_id, company_id)
         if proposal is None:
-            raise HTTPException(status_code=404)
+            await _audit_cross_tenant_denied(UUID(user_info["sub"]), proposal_id, company_id)
+            raise _forbidden()
 
-        doc = await doc_repo.get_by_id(proposal.document_id)
+        doc = await doc_repo.get_by_id_for_company(proposal.document_id, company_id)
 
     return {
         "proposal": proposal.model_dump(),
@@ -71,47 +96,48 @@ async def get_proposal(proposal_id: UUID, request: Request) -> dict:
 
 @router.post("/proposals/{proposal_id}/approve")
 async def approve_proposal(proposal_id: UUID, request: Request) -> dict:
-    from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.repo import (
-        SqlProposalRepository,
-        SqlDocumentRepository,
-        SqlDocumentVersionRepository,
-    )
-    from tessera_api.adapters.audit import write_audit
-    from tessera_api.auth.oidc import require_user
-    from tessera_core.services.proposals import approve_proposal as svc_approve
-    from tessera_core.domain.entities import DocumentLifecycleState
+    user_info, company_id = await require_company_context(request)
+    actor_id = UUID(user_info["sub"])
+    approver_id = user_info.get("id")
 
-    user_info = await require_user(request)
     async with get_db() as session:
         proposal_repo = SqlProposalRepository(session)
         doc_repo = SqlDocumentRepository(session)
         ver_repo = SqlDocumentVersionRepository(session)
+        user_repo = SqlUserRepository(session)
+        space_repo = SqlSpaceRepository(session)
 
-        proposal = await proposal_repo.get_by_id(proposal_id)
+        proposal = await proposal_repo.get_by_id_for_company(proposal_id, company_id)
         if proposal is None:
-            raise HTTPException(status_code=404)
+            await _audit_cross_tenant_denied(actor_id, proposal_id, company_id)
+            raise _forbidden()
 
-        doc = await doc_repo.get_by_id(proposal.document_id)
+        doc = await doc_repo.get_by_id_for_company(proposal.document_id, company_id)
         if doc is None:
-            raise HTTPException(status_code=404)
+            await _audit_cross_tenant_denied(actor_id, proposal_id, company_id)
+            raise _forbidden()
 
-        approver_id = user_info.get("id")
+        # In-company publish rights (FR-004): caller must be able to publish the
+        # target document's space, even within their own company.
+        actor = await user_repo.get_by_id(actor_id)
+        permissions = await space_repo.list_role_permissions(doc.space_id)
+        ctx = AccessContext(user=actor, space_permissions=permissions)
+        if can_approve_proposal(ctx=ctx, document=doc) == AccessDecision.DENY:
+            raise _forbidden()
+
         approved = svc_approve(proposal=proposal, approver_id=approver_id)
         await proposal_repo.update_state(approved)
 
         # Create new DocumentVersion from patch
         versions = await ver_repo.list_by_document(doc.id)
         next_version = len(versions) + 1
-        from tessera_core.domain.entities import DocumentVersion
-
         new_version = DocumentVersion(
             document_id=doc.id,
             version_number=next_version,
             content_markdown=proposal.proposed_markdown_patch,
             frontmatter={},
             approver_user_id=approver_id,
-            approved_at=datetime.now(timezone.utc),
+            approved_at=datetime.now(UTC),
             created_from_proposal_id=proposal.id,
         )
         created_version = await ver_repo.create(new_version)
@@ -134,20 +160,33 @@ async def approve_proposal(proposal_id: UUID, request: Request) -> dict:
 
 @router.post("/proposals/{proposal_id}/reject")
 async def reject_proposal(proposal_id: UUID, body: RejectRequest, request: Request) -> dict:
-    from tessera_api.adapters.database import get_db
-    from tessera_api.adapters.repo import SqlProposalRepository
-    from tessera_api.adapters.audit import write_audit
-    from tessera_api.auth.oidc import require_user
-    from tessera_core.services.proposals import reject_proposal as svc_reject
+    user_info, company_id = await require_company_context(request)
+    actor_id = UUID(user_info["sub"])
+    rejector_id = user_info.get("id")
 
-    user_info = await require_user(request)
     async with get_db() as session:
         proposal_repo = SqlProposalRepository(session)
-        proposal = await proposal_repo.get_by_id(proposal_id)
-        if proposal is None:
-            raise HTTPException(status_code=404)
+        doc_repo = SqlDocumentRepository(session)
+        user_repo = SqlUserRepository(session)
+        space_repo = SqlSpaceRepository(session)
 
-        rejector_id = user_info.get("id")
+        proposal = await proposal_repo.get_by_id_for_company(proposal_id, company_id)
+        if proposal is None:
+            await _audit_cross_tenant_denied(actor_id, proposal_id, company_id)
+            raise _forbidden()
+
+        doc = await doc_repo.get_by_id_for_company(proposal.document_id, company_id)
+        if doc is None:
+            await _audit_cross_tenant_denied(actor_id, proposal_id, company_id)
+            raise _forbidden()
+
+        # In-company publish rights (FR-004).
+        actor = await user_repo.get_by_id(actor_id)
+        permissions = await space_repo.list_role_permissions(doc.space_id)
+        ctx = AccessContext(user=actor, space_permissions=permissions)
+        if can_approve_proposal(ctx=ctx, document=doc) == AccessDecision.DENY:
+            raise _forbidden()
+
         rejected = svc_reject(proposal=proposal, rejector_id=rejector_id, reason=body.reason)
         await proposal_repo.update_state(rejected)
 

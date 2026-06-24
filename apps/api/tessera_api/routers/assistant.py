@@ -94,6 +94,7 @@ async def answer(body: AnswerRequest, request: Request) -> dict:
             action="query",
             entity_type="assistant",
             entity_id=UUID(int=0),
+            metadata={"company_id": str(company_id)},
         )
 
     return response.model_dump()

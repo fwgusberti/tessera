@@ -208,6 +208,7 @@ def _credential_from_model(m: AgentCredentialModel) -> AgentCredential:
         scoped_space_ids=m.scoped_space_ids or [],
         max_confidentiality=Confidentiality(m.max_confidentiality),
         created_by_user_id=m.created_by_user_id,
+        company_id=m.company_id,
         revoked_at=m.revoked_at,
         created_at=m.created_at,
     )
@@ -570,6 +571,18 @@ class SqlConnectorRepository(ConnectorRepository):
         model = result.scalar_one_or_none()
         return _connector_from_model(model) if model else None
 
+    async def get_by_id_for_company(self, connector_id: UUID, company_id: UUID) -> Connector | None:
+        result = await self._session.execute(
+            select(ConnectorModel)
+            .join(SpaceModel, SpaceModel.id == ConnectorModel.space_id)
+            .where(
+                ConnectorModel.id == connector_id,
+                SpaceModel.company_id == company_id,
+            )
+        )
+        model = result.scalar_one_or_none()
+        return _connector_from_model(model) if model else None
+
     async def list_by_space(self, space_id: UUID) -> list[Connector]:
         result = await self._session.execute(
             select(ConnectorModel).where(ConnectorModel.space_id == space_id)
@@ -664,6 +677,40 @@ class SqlProposalRepository(ProposalRepository):
         )
         model = result.scalar_one_or_none()
         return _proposal_from_model(model) if model else None
+
+    async def get_by_id_for_company(
+        self, proposal_id: UUID, company_id: UUID
+    ) -> UpdateProposal | None:
+        result = await self._session.execute(
+            select(UpdateProposalModel)
+            .join(DocumentModel, DocumentModel.id == UpdateProposalModel.document_id)
+            .join(SpaceModel, SpaceModel.id == DocumentModel.space_id)
+            .where(
+                UpdateProposalModel.id == proposal_id,
+                SpaceModel.company_id == company_id,
+            )
+        )
+        model = result.scalar_one_or_none()
+        return _proposal_from_model(model) if model else None
+
+    async def list_for_company(
+        self,
+        company_id: UUID,
+        state: str | None = None,
+        space_id: UUID | None = None,
+    ) -> list[UpdateProposal]:
+        q = (
+            select(UpdateProposalModel)
+            .join(DocumentModel, DocumentModel.id == UpdateProposalModel.document_id)
+            .join(SpaceModel, SpaceModel.id == DocumentModel.space_id)
+            .where(SpaceModel.company_id == company_id)
+        )
+        if state:
+            q = q.where(UpdateProposalModel.state == state)
+        if space_id:
+            q = q.where(DocumentModel.space_id == space_id)
+        result = await self._session.execute(q)
+        return [_proposal_from_model(m) for m in result.scalars().all()]
 
     async def list_pending_for_document(self, document_id: UUID) -> list[UpdateProposal]:
         result = await self._session.execute(
@@ -787,6 +834,7 @@ class SqlAgentCredentialRepository(AgentCredentialRepository):
             scoped_space_ids=credential.scoped_space_ids,
             max_confidentiality=credential.max_confidentiality.value,
             created_by_user_id=credential.created_by_user_id,
+            company_id=credential.company_id,
         )
         self._session.add(model)
         await self._session.flush()
@@ -795,6 +843,18 @@ class SqlAgentCredentialRepository(AgentCredentialRepository):
     async def get_by_token_hash(self, token_hash: str) -> AgentCredential | None:
         result = await self._session.execute(
             select(AgentCredentialModel).where(AgentCredentialModel.token_hash == token_hash)
+        )
+        model = result.scalar_one_or_none()
+        return _credential_from_model(model) if model else None
+
+    async def get_by_id_for_company(
+        self, credential_id: UUID, company_id: UUID
+    ) -> AgentCredential | None:
+        result = await self._session.execute(
+            select(AgentCredentialModel).where(
+                AgentCredentialModel.id == credential_id,
+                AgentCredentialModel.company_id == company_id,
+            )
         )
         model = result.scalar_one_or_none()
         return _credential_from_model(model) if model else None

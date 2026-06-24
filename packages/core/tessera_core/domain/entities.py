@@ -170,6 +170,7 @@ class AgentCredential(BaseModel):
     scoped_space_ids: list[UUID] = Field(default_factory=list)
     max_confidentiality: Confidentiality = Confidentiality.INTERNAL
     created_by_user_id: UUID | None = None
+    company_id: UUID | None = None
     revoked_at: datetime | None = None
     created_at: datetime | None = None
 

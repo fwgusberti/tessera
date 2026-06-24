@@ -52,6 +52,45 @@ def _mock_db():
     return mock_get_db
 
 
+# Generic denial body — must be identical for "missing" and "other company" (FR-010/SC-005).
+_GENERIC_FORBIDDEN = {"error": {"code": "forbidden", "message": "Access denied"}}
+
+
+@contextmanager
+def _company_admin_membership():
+    """Patch the membership lookup so the caller is an ADMIN of the active company.
+
+    Overrides the MEMBER-returning patch installed by ``two_company_setup`` so that
+    ``require_company_admin`` passes its role check and the handler proceeds to the
+    per-resource tenant/space validation (which is what these tests exercise).
+    """
+
+    def _admin(uid, cid):
+        return CompanyMembership(
+            id=uuid.uuid4(), user_id=uid, company_id=cid,
+            role=CompanyRole.ADMIN, joined_at=datetime.now(UTC),
+        )
+
+    repo = AsyncMock()
+    repo.get_membership = AsyncMock(side_effect=_admin)
+    with patch("tessera_api.auth.oidc.SqlCompanyRepository", return_value=repo):
+        yield
+
+
+def _assert_cross_tenant_audit(mock_audit, entity_type: str) -> None:
+    """Assert write_audit was called at least once with a cross_tenant_denied record."""
+    assert mock_audit.await_count >= 1 or mock_audit.call_count >= 1
+    calls = mock_audit.await_args_list or mock_audit.call_args_list
+    actions = [c.kwargs.get("action") for c in calls]
+    entity_types = [c.kwargs.get("entity_type") for c in calls]
+    assert "cross_tenant_denied" in actions
+    assert entity_type in entity_types
+    # every cross_tenant_denied record carries the active company id in metadata
+    for c in calls:
+        if c.kwargs.get("action") == "cross_tenant_denied":
+            assert "company_id" in (c.kwargs.get("metadata") or {})
+
+
 class TestTenantIsolation:
     """Placeholder — cross-tenant isolation tests added in subsequent tasks."""
 
@@ -504,3 +543,579 @@ class TestUS3MemberIsolation:
                     )
 
         assert response.status_code == 403
+
+
+class TestUS1ProposalIsolation:
+    """US1: proposals are scoped to the document's company; cross-company is denied."""
+
+    def test_list_excludes_other_company_proposals(self, two_company_setup):
+        """GET /proposals as Company B must not include Company A proposals."""
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+        alpha_proposal_id = uuid.uuid4()
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.proposals.get_db", _mock_db()),
+                patch("tessera_api.routers.proposals.SqlProposalRepository") as mock_repo_cls,
+            ):
+                mock_repo = AsyncMock()
+                mock_repo.list_for_company = AsyncMock(return_value=[])
+                mock_repo_cls.return_value = mock_repo
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.get(
+                        "/v1/proposals",
+                        headers={"Authorization": f"Bearer {token_b}"},
+                    )
+
+        assert response.status_code == 200
+        ids = [p["id"] for p in response.json().get("proposals", [])]
+        assert str(alpha_proposal_id) not in ids
+        # the list query was scoped to Company B's id
+        mock_repo.list_for_company.assert_awaited_once()
+        assert mock_repo.list_for_company.await_args.args[0] == company_b_id
+
+    def test_get_other_company_proposal_denied(self, two_company_setup):
+        """GET /proposals/{A_id} as Company B → 403 generic body, no document content, audited."""
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+        alpha_proposal_id = uuid.uuid4()
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.proposals.get_db", _mock_db()),
+                patch("tessera_api.routers.proposals.SqlProposalRepository") as mock_repo_cls,
+                patch("tessera_api.routers.proposals.SqlDocumentRepository"),
+                patch(
+                    "tessera_api.routers.proposals.write_audit", new_callable=AsyncMock
+                ) as mock_audit,
+            ):
+                mock_repo = AsyncMock()
+                mock_repo.get_by_id_for_company = AsyncMock(return_value=None)
+                mock_repo_cls.return_value = mock_repo
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.get(
+                        f"/v1/proposals/{alpha_proposal_id}",
+                        headers={"Authorization": f"Bearer {token_b}"},
+                    )
+
+        assert response.status_code == 403
+        assert response.json() == _GENERIC_FORBIDDEN
+        assert "target_document" not in response.json()
+        _assert_cross_tenant_audit(mock_audit, "proposal")
+
+    def test_get_denial_body_matches_missing(self, two_company_setup):
+        """SC-005: the 403 body for another company's id equals the body for a missing id."""
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+
+        from fastapi.testclient import TestClient
+        from tessera_api.main import app
+
+        bodies = []
+        for _ in range(2):
+            with _bypass_onboarding_guard():
+                with (
+                    patch("tessera_api.routers.proposals.get_db", _mock_db()),
+                    patch("tessera_api.routers.proposals.SqlProposalRepository") as mock_repo_cls,
+                    patch("tessera_api.routers.proposals.SqlDocumentRepository"),
+                    patch("tessera_api.routers.proposals.write_audit", new_callable=AsyncMock),
+                ):
+                    mock_repo = AsyncMock()
+                    mock_repo.get_by_id_for_company = AsyncMock(return_value=None)
+                    mock_repo_cls.return_value = mock_repo
+
+                    with TestClient(app) as client:
+                        resp = client.get(
+                            f"/v1/proposals/{uuid.uuid4()}",
+                            headers={"Authorization": f"Bearer {token_b}"},
+                        )
+            assert resp.status_code == 403
+            bodies.append(resp.json())
+
+        assert bodies[0] == bodies[1]
+
+    def test_approve_other_company_proposal_denied(self, two_company_setup):
+        """POST /proposals/{A_id}/approve as Company B → 403; no state change; audited."""
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+        alpha_proposal_id = uuid.uuid4()
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.proposals.get_db", _mock_db()),
+                patch("tessera_api.routers.proposals.SqlProposalRepository") as mock_repo_cls,
+                patch("tessera_api.routers.proposals.SqlDocumentRepository"),
+                patch("tessera_api.routers.proposals.SqlDocumentVersionRepository"),
+                patch("tessera_api.routers.proposals.SqlUserRepository"),
+                patch("tessera_api.routers.proposals.SqlSpaceRepository"),
+                patch(
+                    "tessera_api.routers.proposals.write_audit", new_callable=AsyncMock
+                ) as mock_audit,
+            ):
+                mock_repo = AsyncMock()
+                mock_repo.get_by_id_for_company = AsyncMock(return_value=None)
+                mock_repo_cls.return_value = mock_repo
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.post(
+                        f"/v1/proposals/{alpha_proposal_id}/approve",
+                        headers={"Authorization": f"Bearer {token_b}"},
+                    )
+
+        assert response.status_code == 403
+        assert response.json() == _GENERIC_FORBIDDEN
+        # A's proposal/document/version history were never mutated
+        mock_repo.update_state.assert_not_awaited()
+        _assert_cross_tenant_audit(mock_audit, "proposal")
+
+    def test_reject_other_company_proposal_denied(self, two_company_setup):
+        """POST /proposals/{A_id}/reject as Company B → 403; proposal state unchanged; audited."""
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+        alpha_proposal_id = uuid.uuid4()
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.proposals.get_db", _mock_db()),
+                patch("tessera_api.routers.proposals.SqlProposalRepository") as mock_repo_cls,
+                patch("tessera_api.routers.proposals.SqlDocumentRepository"),
+                patch("tessera_api.routers.proposals.SqlUserRepository"),
+                patch("tessera_api.routers.proposals.SqlSpaceRepository"),
+                patch(
+                    "tessera_api.routers.proposals.write_audit", new_callable=AsyncMock
+                ) as mock_audit,
+            ):
+                mock_repo = AsyncMock()
+                mock_repo.get_by_id_for_company = AsyncMock(return_value=None)
+                mock_repo_cls.return_value = mock_repo
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.post(
+                        f"/v1/proposals/{alpha_proposal_id}/reject",
+                        json={"reason": "nope"},
+                        headers={"Authorization": f"Bearer {token_b}"},
+                    )
+
+        assert response.status_code == 403
+        assert response.json() == _GENERIC_FORBIDDEN
+        mock_repo.update_state.assert_not_awaited()
+        _assert_cross_tenant_audit(mock_audit, "proposal")
+
+
+class TestUS2ConnectorIsolation:
+    """US2: connector create/sync require the resource to belong to the active company."""
+
+    def test_admin_cannot_create_connector_in_other_company_space(self, two_company_setup):
+        """Company B admin POST connector on Company A space → 403, no connector created, audited."""
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+        alpha_space_id = uuid.uuid4()
+
+        with _bypass_onboarding_guard(), _company_admin_membership():
+            with (
+                patch("tessera_api.routers.connectors.get_db", _mock_db()),
+                patch("tessera_api.routers.connectors.SqlSpaceRepository") as mock_space_cls,
+                patch("tessera_api.routers.connectors.SqlConnectorRepository") as mock_conn_cls,
+                patch(
+                    "tessera_api.routers.connectors.write_audit", new_callable=AsyncMock
+                ) as mock_audit,
+            ):
+                mock_space = AsyncMock()
+                mock_space.get_by_id_for_company = AsyncMock(return_value=None)
+                mock_space_cls.return_value = mock_space
+
+                mock_conn = AsyncMock()
+                mock_conn_cls.return_value = mock_conn
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.post(
+                        f"/v1/spaces/{alpha_space_id}/connectors",
+                        json={"type": "gdrive", "config": {"folder": "secret"}},
+                        headers={"Authorization": f"Bearer {token_b}"},
+                    )
+
+        assert response.status_code == 403
+        assert response.json() == _GENERIC_FORBIDDEN
+        mock_conn.create.assert_not_awaited()
+        _assert_cross_tenant_audit(mock_audit, "space")
+
+    def test_admin_cannot_sync_other_company_connector(self, two_company_setup):
+        """Company B admin POST sync on Company A connector → 403, no Celery job, audited."""
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+        alpha_connector_id = uuid.uuid4()
+
+        with _bypass_onboarding_guard(), _company_admin_membership():
+            with (
+                patch("tessera_api.routers.connectors.get_db", _mock_db()),
+                patch("tessera_api.routers.connectors.SqlConnectorRepository") as mock_conn_cls,
+                patch("tessera_api.routers.connectors.sync_connector_task") as mock_task,
+                patch(
+                    "tessera_api.routers.connectors.write_audit", new_callable=AsyncMock
+                ) as mock_audit,
+            ):
+                mock_conn = AsyncMock()
+                mock_conn.get_by_id_for_company = AsyncMock(return_value=None)
+                mock_conn_cls.return_value = mock_conn
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.post(
+                        f"/v1/connectors/{alpha_connector_id}/sync",
+                        headers={"Authorization": f"Bearer {token_b}"},
+                    )
+
+        assert response.status_code == 403
+        assert response.json() == _GENERIC_FORBIDDEN
+        mock_task.delay.assert_not_called()
+        _assert_cross_tenant_audit(mock_audit, "connector")
+
+
+class TestUS3AgentCredentialIsolation:
+    """US3: agent credentials are bound to a company; cross-company issue/revoke denied."""
+
+    def test_admin_cannot_issue_credential_scoped_to_other_company_space(self, two_company_setup):
+        """Company B admin issues a token scoped to a Company A space → 403, no credential, audited."""
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+        alpha_space_id = uuid.uuid4()
+
+        with _bypass_onboarding_guard(), _company_admin_membership():
+            with (
+                patch("tessera_api.routers.agent_credentials.get_db", _mock_db()),
+                patch("tessera_api.routers.agent_credentials.SqlSpaceRepository") as mock_space_cls,
+                patch(
+                    "tessera_api.routers.agent_credentials.SqlAgentCredentialRepository"
+                ) as mock_cred_cls,
+                patch(
+                    "tessera_api.routers.agent_credentials.write_audit", new_callable=AsyncMock
+                ) as mock_audit,
+            ):
+                mock_space = AsyncMock()
+                mock_space.get_by_id_for_company = AsyncMock(return_value=None)
+                mock_space_cls.return_value = mock_space
+
+                mock_cred = AsyncMock()
+                mock_cred_cls.return_value = mock_cred
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/v1/agent-credentials",
+                        json={"name": "rogue", "scoped_space_ids": [str(alpha_space_id)]},
+                        headers={"Authorization": f"Bearer {token_b}"},
+                    )
+
+        assert response.status_code == 403
+        assert response.json() == _GENERIC_FORBIDDEN
+        mock_cred.create.assert_not_awaited()
+        _assert_cross_tenant_audit(mock_audit, "agent_credential")
+
+    def test_admin_cannot_revoke_other_company_credential(self, two_company_setup):
+        """Company B admin revokes a Company A credential → 403, credential still active, audited."""
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+        alpha_credential_id = uuid.uuid4()
+
+        with _bypass_onboarding_guard(), _company_admin_membership():
+            with (
+                patch("tessera_api.routers.agent_credentials.get_db", _mock_db()),
+                patch(
+                    "tessera_api.routers.agent_credentials.SqlAgentCredentialRepository"
+                ) as mock_cred_cls,
+                patch(
+                    "tessera_api.routers.agent_credentials.write_audit", new_callable=AsyncMock
+                ) as mock_audit,
+            ):
+                mock_cred = AsyncMock()
+                mock_cred.get_by_id_for_company = AsyncMock(return_value=None)
+                mock_cred_cls.return_value = mock_cred
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.post(
+                        f"/v1/agent-credentials/{alpha_credential_id}/revoke",
+                        headers={"Authorization": f"Bearer {token_b}"},
+                    )
+
+        assert response.status_code == 403
+        assert response.json() == _GENERIC_FORBIDDEN
+        mock_cred.revoke.assert_not_awaited()
+        _assert_cross_tenant_audit(mock_audit, "agent_credential")
+
+    def test_admin_issues_credential_bound_to_active_company(self, two_company_setup):
+        """Company A admin issues a token scoped to A spaces → 200 and credential.company_id == A."""
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+        alpha_space = _make_space(company_a_id)
+
+        with _bypass_onboarding_guard(), _company_admin_membership():
+            with (
+                patch("tessera_api.routers.agent_credentials.get_db", _mock_db()),
+                patch("tessera_api.routers.agent_credentials.SqlSpaceRepository") as mock_space_cls,
+                patch(
+                    "tessera_api.routers.agent_credentials.SqlAgentCredentialRepository"
+                ) as mock_cred_cls,
+                patch(
+                    "tessera_api.routers.agent_credentials.write_audit", new_callable=AsyncMock
+                ),
+            ):
+                mock_space = AsyncMock()
+                mock_space.get_by_id_for_company = AsyncMock(return_value=alpha_space)
+                mock_space_cls.return_value = mock_space
+
+                mock_cred = AsyncMock()
+                # echo the credential the handler built so we can inspect company_id
+                mock_cred.create = AsyncMock(side_effect=lambda c: c)
+                mock_cred_cls.return_value = mock_cred
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/v1/agent-credentials",
+                        json={"name": "agent-a", "scoped_space_ids": [str(alpha_space.id)]},
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["credential"]["company_id"] == str(company_a_id)
+        assert "token" in body
+        mock_cred.create.assert_awaited_once()
+        assert mock_cred.create.await_args.args[0].company_id == company_a_id
+
+
+class TestUS4MemberWriteIsolation:
+    """US4: member writes & permission writes verify the space belongs to the company."""
+
+    def _run_member_write(self, method, path, token, json=None):
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.members.get_db", _mock_db()),
+                patch("tessera_api.routers.members.SqlSpaceRepository") as mock_space_cls,
+                patch("tessera_api.routers.members.SqlUserRepository"),
+                patch("tessera_api.routers.members.SqlSpaceMembershipRepository"),
+                patch("tessera_api.routers.members.SqlAuditRepository"),
+                patch(
+                    "tessera_api.routers.members.write_audit", new_callable=AsyncMock
+                ) as mock_audit,
+            ):
+                mock_space = AsyncMock()
+                mock_space.get_by_id_for_company = AsyncMock(return_value=None)
+                mock_space_cls.return_value = mock_space
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.request(
+                        method,
+                        path,
+                        json=json,
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+        return response, mock_audit
+
+    def test_member_writes_on_other_company_space_denied(self, two_company_setup):
+        """invite / change-role / remove / members-me against a Company A space → 403, audited."""
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+        alpha_space = uuid.uuid4()
+        target = uuid.uuid4()
+
+        cases = [
+            ("POST", f"/v1/spaces/{alpha_space}/members", {"user_id": str(target), "role": "viewer"}),
+            ("PUT", f"/v1/spaces/{alpha_space}/members/{target}", {"role": "editor"}),
+            ("DELETE", f"/v1/spaces/{alpha_space}/members/{target}", None),
+            ("GET", f"/v1/spaces/{alpha_space}/members/me", None),
+        ]
+        for method, path, body in cases:
+            response, mock_audit = self._run_member_write(method, path, token_b, body)
+            assert response.status_code == 403, f"{method} {path} -> {response.status_code}"
+            assert response.json() == _GENERIC_FORBIDDEN
+            _assert_cross_tenant_audit(mock_audit, "space")
+
+    def test_permission_create_on_other_company_space_denied(self, two_company_setup):
+        """Company B admin POST permission on a Company A space → 403, audited."""
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+        alpha_space = uuid.uuid4()
+
+        with _bypass_onboarding_guard(), _company_admin_membership():
+            with (
+                patch("tessera_api.routers.spaces.get_db", _mock_db()),
+                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_space_cls,
+                patch(
+                    "tessera_api.routers.spaces.write_audit", new_callable=AsyncMock
+                ) as mock_audit,
+            ):
+                mock_space = AsyncMock()
+                mock_space.get_by_id_for_company = AsyncMock(return_value=None)
+                mock_space_cls.return_value = mock_space
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.post(
+                        f"/v1/spaces/{alpha_space}/permissions",
+                        json={"idp_group": "eng", "role": "reader"},
+                        headers={"Authorization": f"Bearer {token_b}"},
+                    )
+
+        assert response.status_code == 403
+        assert response.json() == _GENERIC_FORBIDDEN
+        _assert_cross_tenant_audit(mock_audit, "space")
+
+
+class TestUS5MetricsIsolation:
+    """US5: metric totals reflect only the active company (SC-003)."""
+
+    def test_metrics_counts_scoped_to_active_company(self, two_company_setup):
+        token_a, company_a_id, token_b, company_b_id = two_company_setup
+
+        # Controlled per-query results: B has 5 queries and 2 pending proposals.
+        res_queries = MagicMock()
+        res_queries.scalar.return_value = 5
+        res_pending = MagicMock()
+        res_pending.scalar.return_value = 2
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(side_effect=[res_queries, res_pending])
+        mock_db = MagicMock()
+        mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with _bypass_onboarding_guard(), _company_admin_membership():
+            with patch("tessera_api.routers.metrics.get_db", mock_db):
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.get(
+                        "/v1/metrics",
+                        headers={"Authorization": f"Bearer {token_b}"},
+                    )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total_queries"] == 5
+        assert body["documents_with_drift"] == 2
+
+        # SC-003: both aggregates are filtered by Company B and never reference A.
+        from sqlalchemy.dialects import postgresql
+
+        stmts = [c.args[0] for c in mock_session.execute.await_args_list]
+        assert len(stmts) == 2
+        for stmt in stmts:
+            compiled = str(
+                stmt.compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            )
+            assert str(company_b_id) in compiled
+            assert str(company_a_id) not in compiled
+
+
+@contextmanager
+def _role_by_company(user_id, admin_company_id):
+    """Patch membership lookup: ADMIN in admin_company_id, MEMBER in every other company."""
+
+    def _ms(uid, cid):
+        role = CompanyRole.ADMIN if cid == admin_company_id else CompanyRole.MEMBER
+        return CompanyMembership(
+            id=uuid.uuid4(), user_id=uid, company_id=cid, role=role,
+            joined_at=datetime.now(UTC),
+        )
+
+    repo = AsyncMock()
+    repo.get_membership = AsyncMock(side_effect=_ms)
+    with patch("tessera_api.auth.oidc.SqlCompanyRepository", return_value=repo):
+        yield
+
+
+class TestUS6PerCompanyAdmin:
+    """US6: admin authority is per-company; admin-of-A is not admin-of-B (SC-004)."""
+
+    def test_admin_of_a_denied_admin_actions_on_b(self, two_company_setup):
+        """A user who is ADMIN of A but only MEMBER of B is refused every admin action on B."""
+        _ta, company_a_id, _tb, company_b_id = two_company_setup
+
+        from tessera_api.auth.jwt_auth import create_access_token
+
+        user_id = uuid.uuid4()
+        token_b = create_access_token(user_id, "u@x.test", False, company_id=company_b_id)
+
+        space_id = uuid.uuid4()
+        cred_id = uuid.uuid4()
+        connector_id = uuid.uuid4()
+
+        admin_actions = [
+            ("POST", f"/v1/spaces/{space_id}/connectors", {"type": "gdrive", "config": {}}),
+            ("POST", f"/v1/connectors/{connector_id}/sync", None),
+            ("POST", "/v1/agent-credentials", {"name": "x", "scoped_space_ids": []}),
+            ("POST", f"/v1/agent-credentials/{cred_id}/revoke", None),
+            ("POST", f"/v1/spaces/{space_id}/permissions", {"idp_group": "g", "role": "reader"}),
+            ("GET", "/v1/metrics", None),
+        ]
+
+        from fastapi.testclient import TestClient
+        from tessera_api.main import app
+
+        for method, path, body in admin_actions:
+            with _bypass_onboarding_guard(), _role_by_company(user_id, company_a_id):
+                with TestClient(app) as client:
+                    resp = client.request(
+                        method, path, json=body,
+                        headers={"Authorization": f"Bearer {token_b}"},
+                    )
+            assert resp.status_code == 403, f"{method} {path} -> {resp.status_code}"
+            assert resp.json() == _GENERIC_FORBIDDEN
+
+    def test_admin_of_a_allowed_admin_action_on_a(self, two_company_setup):
+        """The same user succeeds on the identical admin action within Company A."""
+        _ta, company_a_id, _tb, company_b_id = two_company_setup
+
+        from tessera_api.auth.jwt_auth import create_access_token
+
+        user_id = uuid.uuid4()
+        token_a = create_access_token(user_id, "u@x.test", False, company_id=company_a_id)
+
+        res_queries = MagicMock()
+        res_queries.scalar.return_value = 3
+        res_pending = MagicMock()
+        res_pending.scalar.return_value = 1
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(side_effect=[res_queries, res_pending])
+        mock_db = MagicMock()
+        mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with _bypass_onboarding_guard(), _role_by_company(user_id, company_a_id):
+            with patch("tessera_api.routers.metrics.get_db", mock_db):
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    resp = client.get(
+                        "/v1/metrics",
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert resp.status_code == 200
+        assert resp.json()["total_queries"] == 3

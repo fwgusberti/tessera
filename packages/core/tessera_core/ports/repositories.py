@@ -140,6 +140,11 @@ class ConnectorRepository(ABC):
     async def get_by_id(self, connector_id: UUID) -> Connector | None: ...
 
     @abstractmethod
+    async def get_by_id_for_company(
+        self, connector_id: UUID, company_id: UUID
+    ) -> Connector | None: ...
+
+    @abstractmethod
     async def list_by_space(self, space_id: UUID) -> list[Connector]: ...
 
     @abstractmethod
@@ -165,6 +170,19 @@ class ProposalRepository(ABC):
 
     @abstractmethod
     async def get_by_id(self, proposal_id: UUID) -> UpdateProposal | None: ...
+
+    @abstractmethod
+    async def get_by_id_for_company(
+        self, proposal_id: UUID, company_id: UUID
+    ) -> UpdateProposal | None: ...
+
+    @abstractmethod
+    async def list_for_company(
+        self,
+        company_id: UUID,
+        state: str | None = None,
+        space_id: UUID | None = None,
+    ) -> list[UpdateProposal]: ...
 
     @abstractmethod
     async def list_pending_for_document(self, document_id: UUID) -> list[UpdateProposal]: ...
@@ -196,6 +214,11 @@ class AgentCredentialRepository(ABC):
 
     @abstractmethod
     async def get_by_token_hash(self, token_hash: str) -> AgentCredential | None: ...
+
+    @abstractmethod
+    async def get_by_id_for_company(
+        self, credential_id: UUID, company_id: UUID
+    ) -> AgentCredential | None: ...
 
     @abstractmethod
     async def revoke(self, credential_id: UUID) -> AgentCredential: ...

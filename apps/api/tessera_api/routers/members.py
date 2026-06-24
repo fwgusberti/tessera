@@ -8,19 +8,49 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from tessera_api.adapters.audit import write_audit
 from tessera_api.adapters.database import get_db
 from tessera_api.adapters.repo import (
     SqlAuditRepository,
     SqlSpaceMembershipRepository,
+    SqlSpaceRepository,
     SqlUserRepository,
 )
-from tessera_api.auth.oidc import require_company_context, require_user
+from tessera_api.auth.oidc import require_company_context
 from tessera_api.routers.spaces import validate_space_for_company
 from tessera_core.domain.entities import SpaceRole
 from tessera_core.permissions.access import can_read_space_document
 from tessera_core.services.membership import MembershipService
 
 router = APIRouter(tags=["members"])
+
+
+async def _require_space_in_company(space_id: UUID, company_id: UUID, actor_id: UUID) -> None:
+    """Verify space belongs to the active company; on miss audit + raise generic 403.
+
+    Mirrors the read-path ``validate_space_for_company`` but additionally records a
+    ``cross_tenant_denied`` audit entry, so member/permission writes are
+    indistinguishable from a missing space (FR-007 / FR-010).
+    """
+    async with get_db() as session:
+        space_repo = SqlSpaceRepository(session)
+        space = await space_repo.get_by_id_for_company(space_id, company_id)
+
+    if space is None:
+        async with get_db() as audit_session:
+            await write_audit(
+                audit_session,
+                actor_type="user",
+                actor_id=actor_id,
+                action="cross_tenant_denied",
+                entity_type="space",
+                entity_id=space_id,
+                metadata={"company_id": str(company_id)},
+            )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": "forbidden", "message": "Access denied"}},
+        )
 
 
 class InviteMemberRequest(BaseModel):
@@ -34,8 +64,9 @@ class ChangeRoleRequest(BaseModel):
 
 @router.post("/spaces/{space_id}/members", status_code=status.HTTP_201_CREATED)
 async def invite_member(space_id: UUID, body: InviteMemberRequest, request: Request) -> dict:
-    user_info = await require_user(request)
+    user_info, company_id = await require_company_context(request)
     actor_id = UUID(user_info.get("id") or user_info.get("sub"))
+    await _require_space_in_company(space_id, company_id, actor_id)
 
     async with get_db() as session:
         user_repo = SqlUserRepository(session)
@@ -85,8 +116,9 @@ async def list_members(space_id: UUID, request: Request) -> dict:
 
 @router.get("/spaces/{space_id}/members/me")
 async def get_my_membership(space_id: UUID, request: Request) -> dict:
-    user_info = await require_user(request)
+    user_info, company_id = await require_company_context(request)
     actor_id = UUID(user_info.get("id") or user_info.get("sub"))
+    await _require_space_in_company(space_id, company_id, actor_id)
 
     async with get_db() as session:
         user_repo = SqlUserRepository(session)
@@ -107,8 +139,9 @@ async def get_my_membership(space_id: UUID, request: Request) -> dict:
 async def change_member_role(
     space_id: UUID, user_id: UUID, body: ChangeRoleRequest, request: Request
 ) -> dict:
-    user_info = await require_user(request)
+    user_info, company_id = await require_company_context(request)
     actor_id = UUID(user_info.get("id") or user_info.get("sub"))
+    await _require_space_in_company(space_id, company_id, actor_id)
 
     async with get_db() as session:
         user_repo = SqlUserRepository(session)
@@ -135,8 +168,9 @@ async def change_member_role(
 
 @router.delete("/spaces/{space_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_member(space_id: UUID, user_id: UUID, request: Request) -> Response:
-    user_info = await require_user(request)
+    user_info, company_id = await require_company_context(request)
     actor_id = UUID(user_info.get("id") or user_info.get("sub"))
+    await _require_space_in_company(space_id, company_id, actor_id)
 
     async with get_db() as session:
         user_repo = SqlUserRepository(session)

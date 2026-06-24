@@ -1,35 +1,51 @@
-"""Metrics endpoint — product-level metrics (SC-008, FR-026)."""
+"""Metrics endpoint — product-level metrics (SC-008, FR-026).
+
+Company-scoped (feature 035): counts reflect only the active company. Query
+volume is derived from ``query`` audit records tagged with the company id, and
+pending-proposal/drift counts are scoped via the proposal → document → space join.
+"""
 
 from fastapi import APIRouter, Request
+from sqlalchemy import func, select
+
+from tessera_api.adapters.database import get_db
+from tessera_api.adapters.models import (
+    AuditRecordModel,
+    DocumentModel,
+    SpaceModel,
+    UpdateProposalModel,
+)
+from tessera_api.auth.oidc import require_company_admin
 
 router = APIRouter(tags=["metrics"])
 
 
 @router.get("/metrics")
 async def get_metrics(request: Request) -> dict:
-    from tessera_api.adapters.database import get_db
-    from tessera_api.auth.oidc import require_user
-    from sqlalchemy import select, func, text
-    from tessera_api.adapters.models import AuditRecordModel, UpdateProposalModel
-
-    user_info = await require_user(request)
-    if not user_info.get("is_admin"):
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=403, detail="Admin required")
+    _user_info, company_id, _membership = await require_company_admin(request)
 
     async with get_db() as session:
-        # Count query actions
+        # Queries attributed to the active company (tagged in the "query" audit).
         query_count = (
             await session.execute(
-                select(func.count()).where(AuditRecordModel.action == "query")
+                select(func.count()).where(
+                    AuditRecordModel.action == "query",
+                    AuditRecordModel.record_metadata["company_id"].astext == str(company_id),
+                )
             )
         ).scalar() or 0
 
-        # Proposals stats
+        # Pending proposals whose document's space belongs to the active company.
         pending = (
             await session.execute(
-                select(func.count()).where(UpdateProposalModel.state == "pending")
+                select(func.count())
+                .select_from(UpdateProposalModel)
+                .join(DocumentModel, DocumentModel.id == UpdateProposalModel.document_id)
+                .join(SpaceModel, SpaceModel.id == DocumentModel.space_id)
+                .where(
+                    UpdateProposalModel.state == "pending",
+                    SpaceModel.company_id == company_id,
+                )
             )
         ).scalar() or 0
 
