@@ -1,3 +1,4 @@
+from tessera_core.ports.connector import ConnectorPlugin
 from tessera_core.ports.providers import EmbeddingProvider, LLMProvider
 from tessera_core.ports.repositories import (
     AgentCredentialRepository,
@@ -11,7 +12,6 @@ from tessera_core.ports.repositories import (
     SpaceRepository,
     UserRepository,
 )
-from tessera_core.ports.connector import ConnectorPlugin
 
 __all__ = [
     "LLMProvider",

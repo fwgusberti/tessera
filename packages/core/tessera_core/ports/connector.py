@@ -1,8 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Iterator
+from collections.abc import Iterator
 from uuid import UUID
-
-from tessera_core.domain.entities import SourceArtifact
 
 
 class ArtifactRecord:
