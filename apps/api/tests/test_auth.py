@@ -64,6 +64,7 @@ class TestRequireCompanyContext:
             role=CompanyRole.MEMBER, joined_at=datetime.now(timezone.utc),
         )
         mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=None)
         mock_repo.get_membership = AsyncMock(return_value=membership)
         mock_db = MagicMock()
         mock_session = AsyncMock()

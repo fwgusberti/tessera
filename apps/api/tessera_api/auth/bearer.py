@@ -90,6 +90,11 @@ async def require_onboarding_complete(request: Request) -> None:
             },
         )
 
+    # Non-full tokens (select, onboarding) are blocked by the route-level
+    # _resolve_company_membership guard; skip the onboarding DB check for them.
+    if user_info.get("token_kind", "full") != "full":
+        return
+
     user_id = UUID(user_info["sub"])
 
     from tessera_api.adapters.database import get_db

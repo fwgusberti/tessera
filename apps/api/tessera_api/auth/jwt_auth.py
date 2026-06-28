@@ -14,6 +14,7 @@ from joserfc import jwt
 from joserfc.jwk import OctKey
 
 from tessera_api.config import get_settings
+from tessera_core.domain.token_kind import TokenKind
 
 
 def _signing_key() -> OctKey:
@@ -39,7 +40,11 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(
-    user_id: UUID, email: str, is_admin: bool, company_id: UUID | None = None
+    user_id: UUID,
+    email: str,
+    is_admin: bool,
+    company_id: UUID | None = None,
+    token_kind: TokenKind = "full",
 ) -> str:
     settings = get_settings()
     now = datetime.now(UTC)
@@ -48,6 +53,7 @@ def create_access_token(
         "sub": str(user_id),
         "email": email,
         "is_admin": is_admin,
+        "token_kind": token_kind,
         "iat": int(now.timestamp()),
         "exp": int(exp.timestamp()),
         "jti": str(uuid.uuid4()),

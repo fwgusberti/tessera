@@ -1,0 +1,184 @@
+openapi: "3.1.0"
+info:
+  title: "Tessera Auth API — Tenant-Scoped Changes (039)"
+  version: "0.39.0"
+
+# This fragment documents only the endpoints added or changed by feature 039.
+# Unchanged endpoints (register, logout, change-password, etc.) are omitted.
+
+paths:
+
+  /v1/auth/login:
+    post:
+      summary: "Authenticate and obtain a credential"
+      description: |
+        Returns an access token whose `token_kind` reflects the user's membership state:
+        - `full` — single membership, auto-scoped to that company
+        - `select` — multiple memberships; call /auth/select-tenant next
+        - `onboarding` — zero memberships; onboarding/join endpoints only
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: "Credential issued"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: "Invalid credentials"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /v1/auth/select-tenant:
+    post:
+      summary: "Exchange an unscoped credential for a tenant-scoped one"
+      description: |
+        Accepts a `select`-kind access token and a target company ID.
+        Validates that the authenticated user has an active membership in the target company.
+        Issues a `full`-kind access token and a new scoped refresh token.
+
+        **Rejected when**:
+        - No Authorization header (401)
+        - Token is `full`-kind or `onboarding`-kind (403, `wrong_token_kind`)
+        - User has no active membership in the target company (403, `not_a_member`)
+        - Target company is inactive (403, `company_suspended`)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SelectTenantRequest"
+      responses:
+        "200":
+          description: "Fully scoped credential issued"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "403":
+          description: "Not a member of the requested company, or wrong token kind"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /v1/auth/refresh:
+    post:
+      summary: "Rotate a refresh token — preserves tenant scope"
+      description: |
+        Accepts an opaque refresh token and issues a new access token + refresh token pair.
+        The new access token carries the same `token_kind` and `company_id` as when
+        the refresh token was originally issued.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: "New token pair issued (same scope)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: "Invalid or expired refresh token"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+
+    SelectTenantRequest:
+      type: object
+      required: [company_id]
+      properties:
+        company_id:
+          type: string
+          format: uuid
+          description: "UUID of the company to scope the credential to"
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    TokenResponse:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+          description: "JWT. Claims include: sub, email, is_admin, token_kind, and (for full tokens) company_id"
+        refresh_token:
+          type: string
+          description: "Opaque random token for rotation"
+        token_type:
+          type: string
+          enum: [bearer]
+        expires_in:
+          type: integer
+          description: "Access token lifetime in seconds"
+        tenant_selection_required:
+          type: boolean
+          description: "True when token_kind == 'select'; client should present tenant picker UI"
+
+    ErrorBody:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: "Machine-readable error code"
+              enum:
+                - invalid_credentials
+                - invalid_token
+                - wrong_token_kind
+                - not_a_member
+                - company_suspended
+                - no_company_context
+                - credential_not_scoped
+                - forbidden
+            message:
+              type: string
+              description: "Human-readable message"

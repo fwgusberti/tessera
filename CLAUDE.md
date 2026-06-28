@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/038-api-clean-architecture/plan.md
+at specs/039-tenant-scoped-auth/plan.md
 <!-- SPECKIT END -->

@@ -27,9 +27,11 @@ from tessera_api.auth.jwt_auth import (
     verify_access_token,
     verify_password,
 )
+from tessera_api.auth.oidc import require_unscoped_or_full_token
 from tessera_api.auth.password_strength import validate_password_strength
 from tessera_api.config import get_settings
 from tessera_core.domain.entities import RefreshToken, User
+from tessera_core.domain.token_kind import TokenKind
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)
@@ -38,6 +40,7 @@ _bearer = HTTPBearer(auto_error=False)
 # ---------------------------------------------------------------------------
 # Request / response schemas
 # ---------------------------------------------------------------------------
+
 
 class RegisterRequest(BaseModel):
     email: str
@@ -72,6 +75,10 @@ class ChangePasswordRequest(BaseModel):
     refresh_token: str
 
 
+class SelectTenantRequest(BaseModel):
+    company_id: uuid.UUID
+
+
 class ForgotPasswordRequest(BaseModel):
     email: str
 
@@ -86,6 +93,7 @@ class ResetPasswordRequest(BaseModel):
 # POST /v1/auth/register
 # ---------------------------------------------------------------------------
 
+
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest) -> dict:
     async with get_db() as session:
@@ -95,7 +103,12 @@ async def register(body: RegisterRequest) -> dict:
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={"error": {"code": "email_already_registered", "message": "Email already registered"}},
+                detail={
+                    "error": {
+                        "code": "email_already_registered",
+                        "message": "Email already registered",
+                    }
+                },
             )
 
         new_user = User(
@@ -129,6 +142,7 @@ async def register(body: RegisterRequest) -> dict:
 # ---------------------------------------------------------------------------
 # POST /v1/auth/login
 # ---------------------------------------------------------------------------
+
 
 @router.post("/login")
 async def login(body: LoginRequest) -> dict:
@@ -170,11 +184,27 @@ async def login(body: LoginRequest) -> dict:
             )
             raise _INVALID
 
+        company_repo = SqlCompanyRepository(session)
+        memberships = await company_repo.list_memberships_for_user(user.id)
+
+        membership_count = len(memberships)
+        if membership_count == 1:
+            token_kind: TokenKind = "full"
+            auto_company_id = memberships[0].company_id
+        elif membership_count > 1:
+            token_kind = "select"
+            auto_company_id = None
+        else:
+            token_kind = "onboarding"
+            auto_company_id = None
+
         raw_refresh = create_refresh_token()
         refresh_record = RefreshToken(
             user_id=user.id,
             token_hash=hash_refresh_token(raw_refresh),
             expires_at=refresh_token_expires_at(),
+            company_id=auto_company_id,
+            token_kind=token_kind,
         )
         await rt_repo.create(refresh_record)
 
@@ -185,33 +215,44 @@ async def login(body: LoginRequest) -> dict:
             action="auth.login.success",
             entity_type="user",
             entity_id=user.id,
+            metadata={"token_kind": token_kind},
         )
 
-        company_repo = SqlCompanyRepository(session)
-        memberships = await company_repo.list_memberships_for_user(user.id)
-
-    auto_company_id = memberships[0].company_id if len(memberships) == 1 else None
-
     settings = get_settings()
-    access_token = create_access_token(user.id, user.email, user.is_admin, company_id=auto_company_id)
+    access_token = create_access_token(
+        user.id,
+        user.email,
+        user.is_admin,
+        company_id=auto_company_id,
+        token_kind=token_kind,
+    )
 
-    return {
+    response: dict = {
         "access_token": access_token,
         "refresh_token": raw_refresh,
         "token_type": "bearer",
         "expires_in": settings.jwt_access_token_expire_minutes * 60,
     }
+    if token_kind == "select":
+        response["tenant_selection_required"] = True
+    return response
 
 
 # ---------------------------------------------------------------------------
 # POST /v1/auth/refresh
 # ---------------------------------------------------------------------------
 
+
 @router.post("/refresh")
 async def refresh(body: RefreshRequest) -> dict:
     _INVALID = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail={"error": {"code": "invalid_refresh_token", "message": "Invalid or expired refresh token"}},
+        detail={
+            "error": {
+                "code": "invalid_refresh_token",
+                "message": "Invalid or expired refresh token",
+            }
+        },
     )
 
     from datetime import UTC, datetime
@@ -235,11 +276,17 @@ async def refresh(body: RefreshRequest) -> dict:
         if user is None:
             raise _INVALID
 
+        # Preserve scope from the stored refresh token
+        preserved_company_id = stored.company_id
+        preserved_token_kind: TokenKind = stored.token_kind  # type: ignore[assignment]
+
         raw_refresh = create_refresh_token()
         new_record = RefreshToken(
             user_id=user.id,
             token_hash=hash_refresh_token(raw_refresh),
             expires_at=refresh_token_expires_at(),
+            company_id=preserved_company_id,
+            token_kind=preserved_token_kind,
         )
         await rt_repo.create(new_record)
 
@@ -253,7 +300,94 @@ async def refresh(body: RefreshRequest) -> dict:
         )
 
     settings = get_settings()
-    access_token = create_access_token(user.id, user.email, user.is_admin)
+    access_token = create_access_token(
+        user.id,
+        user.email,
+        user.is_admin,
+        company_id=preserved_company_id,
+        token_kind=preserved_token_kind,
+    )
+
+    return {
+        "access_token": access_token,
+        "refresh_token": raw_refresh,
+        "token_type": "bearer",
+        "expires_in": settings.jwt_access_token_expire_minutes * 60,
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/auth/select-tenant
+# ---------------------------------------------------------------------------
+
+
+@router.post("/select-tenant")
+async def select_tenant(
+    body: SelectTenantRequest,
+    user_info: Annotated[dict, Depends(require_unscoped_or_full_token)],
+) -> dict:
+    """Exchange a select or full token for a full token scoped to the requested company."""
+    user_id = uuid.UUID(user_info["sub"])
+    target_company_id = body.company_id
+
+    async with get_db() as session:
+        company_repo = SqlCompanyRepository(session)
+        rt_repo = SqlRefreshTokenRepository(session)
+
+        company = await company_repo.get_by_id(target_company_id)
+        if company is not None and hasattr(company, "is_active") and not company.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": {
+                        "code": "company_suspended",
+                        "message": "The company account is suspended",
+                    }
+                },
+            )
+
+        membership = await company_repo.get_membership(user_id, target_company_id)
+        if membership is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": {
+                        "code": "not_a_member",
+                        "message": "You are not a member of this company",
+                    }
+                },
+            )
+
+        is_admin = membership.role.value == "admin"
+
+        raw_refresh = create_refresh_token()
+        new_record = RefreshToken(
+            user_id=user_id,
+            token_hash=hash_refresh_token(raw_refresh),
+            expires_at=refresh_token_expires_at(),
+            company_id=target_company_id,
+            token_kind="full",
+        )
+        await rt_repo.create(new_record)
+
+        await write_audit(
+            session,
+            actor_type="user",
+            actor_id=user_id,
+            action="auth.credential.issued",
+            entity_type="company",
+            entity_id=target_company_id,
+            metadata={"company_id": str(target_company_id)},
+        )
+
+    settings = get_settings()
+    access_token = create_access_token(
+        user_id,
+        user_info.get("email", ""),
+        is_admin,
+        company_id=target_company_id,
+        token_kind="full",
+    )
 
     return {
         "access_token": access_token,
@@ -266,6 +400,7 @@ async def refresh(body: RefreshRequest) -> dict:
 # ---------------------------------------------------------------------------
 # POST /v1/auth/logout
 # ---------------------------------------------------------------------------
+
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
@@ -307,6 +442,7 @@ async def logout(
 # POST /v1/auth/change-password
 # ---------------------------------------------------------------------------
 
+
 @router.post("/change-password")
 async def change_password(
     body: ChangePasswordRequest,
@@ -347,13 +483,23 @@ async def change_password(
         rt_repo = SqlRefreshTokenRepository(session)
 
         user = await user_repo.get_by_id(user_id)
-        if user is None or not user.password_hash or not verify_password(body.current_password, user.password_hash):
+        if (
+            user is None
+            or not user.password_hash
+            or not verify_password(body.current_password, user.password_hash)
+        ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"error": {"code": "invalid_credentials", "message": "Current password is incorrect"}},
+                detail={
+                    "error": {
+                        "code": "invalid_credentials",
+                        "message": "Current password is incorrect",
+                    }
+                },
             )
 
         from sqlalchemy import update as sa_update
+
         from tessera_api.adapters.models import UserModel
 
         await session.execute(
@@ -410,7 +556,11 @@ async def forgot_password(body: ForgotPasswordRequest, request: Request) -> dict
     from tessera_api.auth.rate_limit import check_rate_limit
     from tessera_core.services.password_reset import PasswordResetService
 
-    client_ip = (request.headers.get("x-forwarded-for") or request.client.host if request.client else "unknown")
+    client_ip = (
+        request.headers.get("x-forwarded-for") or request.client.host
+        if request.client
+        else "unknown"
+    )
     rate_key = f"reset:{client_ip}"
 
     import redis.asyncio as aioredis
@@ -418,7 +568,9 @@ async def forgot_password(body: ForgotPasswordRequest, request: Request) -> dict
     settings = get_settings()
     redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
     try:
-        within_limit = await check_rate_limit(redis_client, rate_key, _RATE_LIMIT_MAX, _RATE_LIMIT_WINDOW)
+        within_limit = await check_rate_limit(
+            redis_client, rate_key, _RATE_LIMIT_MAX, _RATE_LIMIT_WINDOW
+        )
     finally:
         await redis_client.aclose()
 
@@ -449,7 +601,9 @@ async def forgot_password(body: ForgotPasswordRequest, request: Request) -> dict
 
         reset_url = f"{settings.frontend_url}/reset-password?token={raw_token}"
         email_adapter = FastMailEmailAdapter()
-        await email_adapter.send_password_reset(to=user.email, reset_url=reset_url, expires_in_minutes=60)
+        await email_adapter.send_password_reset(
+            to=user.email, reset_url=reset_url, expires_in_minutes=60
+        )
 
         await write_audit(
             session,
@@ -467,6 +621,7 @@ async def forgot_password(body: ForgotPasswordRequest, request: Request) -> dict
 # ---------------------------------------------------------------------------
 # POST /v1/auth/reset-password
 # ---------------------------------------------------------------------------
+
 
 @router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
 async def reset_password(body: ResetPasswordRequest) -> None:
@@ -486,7 +641,12 @@ async def reset_password(body: ResetPasswordRequest) -> None:
 
     _INVALID = HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail={"error": {"code": "invalid_or_expired_token", "message": "Reset link is invalid or has expired"}},
+        detail={
+            "error": {
+                "code": "invalid_or_expired_token",
+                "message": "Reset link is invalid or has expired",
+            }
+        },
     )
 
     token_hash = hashlib.sha256(body.token.encode()).hexdigest()

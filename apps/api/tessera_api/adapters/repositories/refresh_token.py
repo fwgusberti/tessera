@@ -17,6 +17,8 @@ def _refresh_token_from_model(m: RefreshTokenModel) -> RefreshToken:
         issued_at=m.issued_at,
         expires_at=m.expires_at,
         is_revoked=m.is_revoked,
+        company_id=m.company_id,
+        token_kind=m.token_kind,
     )
 
 
@@ -30,6 +32,8 @@ class SqlRefreshTokenRepository:
             user_id=token.user_id,
             token_hash=token.token_hash,
             expires_at=token.expires_at,
+            company_id=token.company_id,
+            token_kind=token.token_kind,
         )
         self._session.add(model)
         await self._session.flush()

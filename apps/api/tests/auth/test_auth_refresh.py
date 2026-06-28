@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-def _make_stored_token(raw: str, user_id: uuid.UUID, expired: bool = False) -> MagicMock:
+def _decode_jwt_claims(token: str) -> dict:
+    parts = token.split(".")
+    padded = parts[1] + "=="
+    return json.loads(base64.b64decode(padded))
+
+
+def _make_stored_token(
+    raw: str,
+    user_id: uuid.UUID,
+    expired: bool = False,
+    company_id: uuid.UUID | None = None,
+    token_kind: str = "full",
+) -> MagicMock:
     from tessera_api.auth.jwt_auth import hash_refresh_token
 
     token = MagicMock()
@@ -15,6 +29,8 @@ def _make_stored_token(raw: str, user_id: uuid.UUID, expired: bool = False) -> M
     token.user_id = user_id
     token.token_hash = hash_refresh_token(raw)
     token.is_revoked = False
+    token.company_id = company_id
+    token.token_kind = token_kind
     if expired:
         token.expires_at = datetime(2000, 1, 1, tzinfo=UTC)
     else:
@@ -204,3 +220,86 @@ class TestRefresh:
                 response = client.post("/v1/auth/refresh", json={"refresh_token": raw})
 
         assert response.status_code == 401
+
+
+class TestRefreshScopePreservation:
+    def _call_refresh(self, raw: str, stored_token: MagicMock, user: MagicMock) -> dict:
+        new_token = MagicMock()
+        new_token.id = uuid.uuid4()
+
+        with (
+            patch("tessera_api.routers.auth.get_db") as mock_get_db,
+            patch("tessera_api.routers.auth.SqlRefreshTokenRepository") as mock_rt_cls,
+            patch("tessera_api.routers.auth.SqlUserRepository") as mock_user_cls,
+            patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
+        ):
+            mock_session = AsyncMock()
+            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            mock_rt = AsyncMock()
+            mock_rt.get_by_hash = AsyncMock(return_value=stored_token)
+            mock_rt.revoke = AsyncMock()
+            mock_rt.create = AsyncMock(return_value=new_token)
+            mock_rt_cls.return_value = mock_rt
+
+            mock_user_repo = AsyncMock()
+            mock_user_repo.get_by_id = AsyncMock(return_value=user)
+            mock_user_cls.return_value = mock_user_repo
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.post("/v1/auth/refresh", json={"refresh_token": raw})
+
+        return response
+
+    def test_refresh_full_token_preserves_company_id(self):
+        """Refreshing a full-scoped token issues a new access token with same company_id."""
+        from tessera_api.auth.jwt_auth import create_refresh_token
+
+        raw = create_refresh_token()
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        stored = _make_stored_token(raw, user_id, company_id=company_id, token_kind="full")
+        user = _make_user(user_id)
+
+        response = self._call_refresh(raw, stored, user)
+
+        assert response.status_code == 200
+        claims = _decode_jwt_claims(response.json()["access_token"])
+        assert claims["token_kind"] == "full"
+        assert claims.get("company_id") == str(company_id)
+
+    def test_refresh_select_token_preserves_select_kind(self):
+        """Refreshing a select token issues a new access token with token_kind=select and no company_id."""
+        from tessera_api.auth.jwt_auth import create_refresh_token
+
+        raw = create_refresh_token()
+        user_id = uuid.uuid4()
+        stored = _make_stored_token(raw, user_id, company_id=None, token_kind="select")
+        user = _make_user(user_id)
+
+        response = self._call_refresh(raw, stored, user)
+
+        assert response.status_code == 200
+        claims = _decode_jwt_claims(response.json()["access_token"])
+        assert claims["token_kind"] == "select"
+        assert "company_id" not in claims
+
+    def test_refresh_onboarding_token_preserves_onboarding_kind(self):
+        """Refreshing an onboarding token preserves the onboarding kind and no company_id."""
+        from tessera_api.auth.jwt_auth import create_refresh_token
+
+        raw = create_refresh_token()
+        user_id = uuid.uuid4()
+        stored = _make_stored_token(raw, user_id, company_id=None, token_kind="onboarding")
+        user = _make_user(user_id)
+
+        response = self._call_refresh(raw, stored, user)
+
+        assert response.status_code == 200
+        claims = _decode_jwt_claims(response.json()["access_token"])
+        assert claims["token_kind"] == "onboarding"
+        assert "company_id" not in claims

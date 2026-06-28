@@ -26,5 +26,9 @@ class RefreshTokenModel(Base):
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True
+    )
+    token_kind: Mapped[str] = mapped_column(String(20), nullable=False, default="full")
 
     user: Mapped[UserModel] = relationship("UserModel", back_populates="refresh_tokens")

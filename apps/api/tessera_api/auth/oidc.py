@@ -68,6 +68,8 @@ async def require_user(request: Request) -> dict[str, Any]:
                 "id": claims["sub"],
                 "email": claims.get("email", ""),
                 "is_admin": claims.get("is_admin", False),
+                "token_kind": claims.get("token_kind", "full"),
+                "company_id": claims.get("company_id"),
             }
         except Exception:
             raise HTTPException(
@@ -86,24 +88,31 @@ async def _resolve_company_membership(
 ) -> tuple[dict[str, Any], UUID, CompanyMembership]:
     """Resolve (user_info, company_id, membership) from the request.
 
-    Raises 401 if unauthenticated, 403 if there is no active company context, and
-    403 if the caller's membership in that company is revoked or missing.
+    Raises 401 if unauthenticated, 403 if the token is not fully scoped or
+    there is no active company context, and 403 if the caller's membership
+    in that company is revoked, missing, or the company is inactive.
     """
     user_info = await require_user(request)
+
+    # Gate: only full-scoped tokens may access data endpoints.
+    token_kind = user_info.get("token_kind", "full")
+    if token_kind != "full":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "credential_not_scoped",
+                    "message": "Credential is not scoped to a tenant; call /auth/select-tenant first",
+                }
+            },
+        )
+
     company_id: UUID | None = None
 
-    # 1. Try JWT claim
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[len("Bearer ") :]
-        try:
-            from tessera_api.auth.jwt_auth import verify_access_token
-
-            claims = verify_access_token(token)
-            if "company_id" in claims:
-                company_id = UUID(claims["company_id"])
-        except Exception:
-            pass
+    # 1. Try JWT claim (already decoded by require_user)
+    raw_cid = user_info.get("company_id")
+    if raw_cid:
+        company_id = UUID(str(raw_cid))
 
     # 2. Try session cookie
     if company_id is None:
@@ -119,16 +128,29 @@ async def _resolve_company_membership(
             },
         )
 
-    # 3. Verify membership is still active in the DB
+    # 3. Verify company is active and membership is still valid in the DB
     user_id = UUID(user_info["sub"])
     async with get_db() as session:
         repo = SqlCompanyRepository(session)
+        company = await repo.get_by_id(company_id)
+        if company is not None and hasattr(company, "is_active") and not company.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": {
+                        "code": "company_suspended",
+                        "message": "The company account is suspended",
+                    }
+                },
+            )
         membership = await repo.get_membership(user_id, company_id)
 
     if membership is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": "forbidden", "message": "Membership revoked or not found"}},
+            detail={
+                "error": {"code": "not_a_member", "message": "Membership revoked or not found"}
+            },
         )
 
     return user_info, company_id, membership
@@ -174,6 +196,40 @@ async def require_company_admin(
             detail={"error": {"code": "forbidden", "message": "Access denied"}},
         )
     return user_info, company_id, membership
+
+
+async def require_select_token(request: Request) -> dict[str, Any]:
+    """Verify the request carries a select-kind token; raise 403 for any other kind."""
+    user_info = await require_user(request)
+    token_kind = user_info.get("token_kind", "full")
+    if token_kind != "select":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "wrong_token_kind",
+                    "message": f"Expected select token, got {token_kind!r}",
+                }
+            },
+        )
+    return user_info
+
+
+async def require_unscoped_or_full_token(request: Request) -> dict[str, Any]:
+    """Verify the request carries a select or full-kind token; reject onboarding."""
+    user_info = await require_user(request)
+    token_kind = user_info.get("token_kind", "full")
+    if token_kind == "onboarding":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "wrong_token_kind",
+                    "message": "Onboarding tokens cannot select a tenant",
+                }
+            },
+        )
+    return user_info
 
 
 CompanyContext = Annotated[tuple[dict[str, Any], Any], Depends(require_company_context)]
