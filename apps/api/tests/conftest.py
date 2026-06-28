@@ -142,6 +142,93 @@ def legacy_global_admin_setup():
 
 
 @pytest.fixture()
+def reproduction_setup():
+    """The spec's literal three-company reproduction (feature 037, SC-002).
+
+    Models the reported leak verbatim:
+      - Company 1 (Gusba Dev) owns spaces A and B.
+      - Company 2 owns space C.
+      - Company 3 owns no spaces.
+      - felipe@gusba.dev is a member of Company 1.
+      - a@2.com is a member of Company 2.
+      - a@3.com is a member of Company 3 and carries the legacy global ``is_admin``.
+
+    Patches membership resolution (via ``_patched_membership_resolution``) so each
+    user is a member of exactly their own company and of no other. Tokens are
+    company-scoped. ``spaces_by_company`` maps each active company id to the spaces
+    a correctly-scoped ``list_by_company`` must return, so a test can wire the
+    router's ``SqlSpaceRepository`` mock to reproduce real visibility.
+
+    Returns a ``SimpleNamespace`` with: ``felipe_token`` / ``a2_token`` /
+    ``a3_token``; ``company1_id`` / ``company2_id`` / ``company3_id``; the Space
+    objects ``space_a`` / ``space_b`` / ``space_c``; and ``spaces_by_company``.
+    """
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from tessera_api.auth.jwt_auth import create_access_token
+    from tessera_core.domain.entities import CompanyMembership, CompanyRole, Space
+
+    felipe_id = uuid.uuid4()
+    a2_id = uuid.uuid4()
+    a3_id = uuid.uuid4()
+    company1_id = uuid.uuid4()
+    company2_id = uuid.uuid4()
+    company3_id = uuid.uuid4()
+    now = datetime.now(UTC)
+
+    # felipe & a@2 are ordinary members; a@3 carries the legacy global is_admin flag.
+    felipe_token = create_access_token(felipe_id, "felipe@gusba.dev", False, company_id=company1_id)
+    a2_token = create_access_token(a2_id, "a@2.com", False, company_id=company2_id)
+    a3_token = create_access_token(a3_id, "a@3.com", True, company_id=company3_id)
+
+    def _space(company_id, name):
+        return Space(
+            id=uuid.uuid4(),
+            slug=f"space-{uuid.uuid4().hex[:8]}",
+            name=name,
+            sector="tech",
+            company_id=company_id,
+        )
+
+    space_a = _space(company1_id, "Space A")
+    space_b = _space(company1_id, "Space B")
+    space_c = _space(company2_id, "Space C")
+
+    spaces_by_company = {
+        company1_id: [space_a, space_b],
+        company2_id: [space_c],
+        company3_id: [],
+    }
+
+    # Each user is a member of exactly their own company; everywhere else → None.
+    member_company = {felipe_id: company1_id, a2_id: company2_id, a3_id: company3_id}
+
+    def _ms(uid, cid):
+        if member_company.get(uid) == cid:
+            return CompanyMembership(
+                id=uuid.uuid4(), user_id=uid, company_id=cid,
+                role=CompanyRole.MEMBER, joined_at=now,
+            )
+        return None
+
+    p_db, p_repo = _patched_membership_resolution(_ms)
+    with p_db, p_repo:
+        yield SimpleNamespace(
+            felipe_token=felipe_token,
+            a2_token=a2_token,
+            a3_token=a3_token,
+            company1_id=company1_id,
+            company2_id=company2_id,
+            company3_id=company3_id,
+            space_a=space_a,
+            space_b=space_b,
+            space_c=space_c,
+            spaces_by_company=spaces_by_company,
+        )
+
+
+@pytest.fixture()
 def admin_company_setup():
     """Like ``two_company_setup`` but the caller (Alice) is ADMIN of Company A.
 

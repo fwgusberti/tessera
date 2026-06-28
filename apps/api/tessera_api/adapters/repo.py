@@ -259,19 +259,6 @@ class SqlSpaceRepository(SpaceRepository):
         )
         return [_space_from_model(m) for m in result.scalars().all()]
 
-    async def list_for_user(self, user: User) -> list[Space]:
-        if user.is_admin:
-            return await self.list_all()
-        if not user.groups:
-            return []
-        result = await self._session.execute(
-            select(SpaceModel)
-            .join(RolePermissionModel, RolePermissionModel.space_id == SpaceModel.id)
-            .where(RolePermissionModel.idp_group.in_(user.groups))
-            .distinct()
-        )
-        return [_space_from_model(m) for m in result.scalars().all()]
-
     async def create_role_permission(self, permission: RolePermission) -> RolePermission:
         model = RolePermissionModel(
             id=permission.id,

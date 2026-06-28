@@ -322,3 +322,175 @@ class TestUS4OutsideAdminsDenied:
         assert resp.json() == _GENERIC_NOT_FOUND
         mock_celery.return_value.send_task.assert_not_called()
         assert _cross_tenant_denied_count(mock_audit) == 1
+
+
+# ---------------------------------------------------------------------------
+# Feature 037 — the platform-operator surface is the single audited cross-tenant
+# exception. Each /v1/admin/* space endpoint emits exactly one
+# ``cross_company_admin_access`` record (FR-008/FR-009, contract C-005).
+# ---------------------------------------------------------------------------
+
+
+def _admin_user_patch(is_admin: bool, actor_id: uuid.UUID | None = None):
+    actor_id = actor_id or uuid.uuid4()
+    p = patch(
+        "tessera_api.routers.admin.require_user",
+        new=AsyncMock(
+            return_value={"sub": str(actor_id), "id": str(actor_id), "is_admin": is_admin}
+        ),
+    )
+    return actor_id, p
+
+
+def _patch_audit_repo():
+    """Patch admin's SqlAuditRepository, returning (mock_cls, append_mock)."""
+    append_mock = AsyncMock()
+    repo = MagicMock()
+    repo.append = append_mock
+    return patch("tessera_api.routers.admin.SqlAuditRepository", return_value=repo), append_mock
+
+
+def _admin_access_records(append_mock):
+    return [
+        c.args[0]
+        for c in append_mock.await_args_list
+        if getattr(c.args[0], "action", None) == "cross_company_admin_access"
+    ]
+
+
+class TestOperatorSurfaceAudited:
+    """Contract C-005: every cross-company operator read/write is audited exactly once."""
+
+    def test_list_all_spaces_emits_one_cross_company_admin_access(self):
+        actor_id, p_user = _admin_user_patch(is_admin=True)
+        p_audit, append_mock = _patch_audit_repo()
+
+        from tessera_api.main import app
+
+        with (
+            p_user,
+            patch("tessera_api.routers.admin.get_db", _mock_db()),
+            patch("tessera_api.routers.admin.SqlSpaceRepository") as mock_space_cls,
+            p_audit,
+        ):
+            mock_space = AsyncMock()
+            mock_space.list_all = AsyncMock(return_value=[])
+            mock_space_cls.return_value = mock_space
+
+            with TestClient(app) as client:
+                resp = client.get(
+                    "/v1/admin/spaces", headers={"Authorization": "Bearer x"}
+                )
+
+        assert resp.status_code == 200
+        records = _admin_access_records(append_mock)
+        assert len(records) == 1
+        rec = records[0]
+        assert rec.entity_type == "spaces"
+        assert rec.actor_id == actor_id
+        assert rec.metadata.get("endpoint") == "/admin/spaces"
+        assert rec.metadata.get("operation") == "list"
+
+    def test_list_all_spaces_non_admin_403(self):
+        _actor_id, p_user = _admin_user_patch(is_admin=False)
+        from tessera_api.main import app
+
+        with p_user, TestClient(app) as client:
+            resp = client.get("/v1/admin/spaces", headers={"Authorization": "Bearer x"})
+        assert resp.status_code == 403
+
+    def test_update_retention_emits_one_cross_company_admin_access(self):
+        actor_id, p_user = _admin_user_patch(is_admin=True)
+        p_audit, append_mock = _patch_audit_repo()
+        space_id = uuid.uuid4()
+
+        from tessera_api.main import app
+
+        with (
+            p_user,
+            patch("tessera_api.routers.admin.get_db", _mock_db()),
+            patch("tessera_api.routers.admin.SqlSpaceRepository") as mock_space_cls,
+            p_audit,
+        ):
+            mock_space = AsyncMock()
+            mock_space.get_by_id = AsyncMock(return_value=_make_space(uuid.uuid4()))
+            mock_space_cls.return_value = mock_space
+
+            with TestClient(app) as client:
+                resp = client.put(
+                    f"/v1/admin/spaces/{space_id}/retention",
+                    json={"validity_days": 30, "action_on_expiry": "archive"},
+                    headers={"Authorization": "Bearer x"},
+                )
+
+        assert resp.status_code == 200
+        records = _admin_access_records(append_mock)
+        assert len(records) == 1
+        rec = records[0]
+        assert rec.entity_type == "space"
+        assert rec.entity_id == space_id
+        assert rec.actor_id == actor_id
+        assert rec.metadata.get("operation") == "retention"
+
+    def test_update_retention_non_admin_403(self):
+        _actor_id, p_user = _admin_user_patch(is_admin=False)
+        space_id = uuid.uuid4()
+        from tessera_api.main import app
+
+        with p_user, TestClient(app) as client:
+            resp = client.put(
+                f"/v1/admin/spaces/{space_id}/retention",
+                json={"validity_days": 30},
+                headers={"Authorization": "Bearer x"},
+            )
+        assert resp.status_code == 403
+
+    def test_bulk_reindex_emits_one_cross_company_admin_access(self):
+        actor_id, p_user = _admin_user_patch(is_admin=True)
+        p_audit, append_mock = _patch_audit_repo()
+
+        # Two published, unchunked docs → two dispatched tasks.
+        rows = [
+            {"id": uuid.uuid4(), "space_id": uuid.uuid4(), "version_id": uuid.uuid4()},
+            {"id": uuid.uuid4(), "space_id": uuid.uuid4(), "version_id": uuid.uuid4()},
+        ]
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.mappings.return_value.all.return_value = rows
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_db = MagicMock()
+        mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        from tessera_api.main import app
+
+        with (
+            p_user,
+            patch("tessera_api.routers.admin.get_db", mock_db),
+            patch("tessera_api.routers.admin.get_celery_app") as mock_celery,
+            p_audit,
+        ):
+            mock_celery.return_value.send_task = MagicMock()
+
+            with TestClient(app) as client:
+                resp = client.post(
+                    "/v1/admin/reindex", headers={"Authorization": "Bearer x"}
+                )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"dispatched": 2}
+        records = _admin_access_records(append_mock)
+        assert len(records) == 1
+        rec = records[0]
+        assert rec.entity_type == "spaces"
+        assert rec.actor_id == actor_id
+        assert rec.metadata.get("operation") == "reindex"
+        assert rec.metadata.get("dispatched") == 2
+
+    def test_bulk_reindex_non_admin_403(self):
+        _actor_id, p_user = _admin_user_patch(is_admin=False)
+        from tessera_api.main import app
+
+        with p_user, TestClient(app) as client:
+            resp = client.post("/v1/admin/reindex", headers={"Authorization": "Bearer x"})
+        assert resp.status_code == 403

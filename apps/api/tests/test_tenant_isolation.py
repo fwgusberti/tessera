@@ -1121,3 +1121,137 @@ class TestUS6PerCompanyAdmin:
 
         assert resp.status_code == 200
         assert resp.json()["total_queries"] == 3
+
+
+class TestUS3LegacyAdminListIsolation:
+    """Feature 037 / C-002: the legacy global ``is_admin`` flag leaks no Company B
+    space into any everyday surface that resolves the active company's space set —
+    search, assistant, and the documents list each scope to ``list_by_company(A)``."""
+
+    def test_search_resolves_only_active_company_spaces(self, legacy_global_admin_setup):
+        """POST /search active as A (legacy is_admin) scopes to A's spaces, never B's."""
+        token_a, company_a_id, company_b_id = legacy_global_admin_setup
+        a_space = _make_space(company_a_id)
+        b_space = _make_space(company_b_id)
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.search.get_db", _mock_db()),
+                patch("tessera_api.routers.search.SqlSpaceRepository") as mock_space_cls,
+                patch("tessera_api.routers.search.OllamaEmbeddingProvider") as mock_embed_cls,
+                patch(
+                    "tessera_api.routers.search.acl_first_search", new_callable=AsyncMock
+                ) as mock_search,
+            ):
+                mock_space = AsyncMock()
+                mock_space.list_by_company = AsyncMock(return_value=[a_space])
+                mock_space_cls.return_value = mock_space
+
+                mock_embed = AsyncMock()
+                mock_embed.embed = AsyncMock(return_value=[[0.1] * 384])
+                mock_embed_cls.return_value = mock_embed
+
+                mock_search.return_value = []
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    resp = client.post(
+                        "/v1/search",
+                        json={"query": "anything", "top_k": 5},
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert resp.status_code == 200
+        mock_space.list_by_company.assert_awaited_once_with(company_a_id)
+        space_ids = mock_search.await_args.kwargs["space_ids"]
+        assert a_space.id in space_ids
+        assert b_space.id not in space_ids
+
+    def test_assistant_resolves_only_active_company_spaces(self, legacy_global_admin_setup):
+        """POST /assistant/answer active as A (legacy is_admin) scopes to A's spaces."""
+        token_a, company_a_id, company_b_id = legacy_global_admin_setup
+        a_space = _make_space(company_a_id)
+        b_space = _make_space(company_b_id)
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.assistant.get_db", _mock_db()),
+                patch("tessera_api.routers.assistant.SqlSpaceRepository") as mock_space_cls,
+                patch("tessera_api.routers.assistant.OllamaEmbeddingProvider") as mock_embed_cls,
+                patch(
+                    "tessera_api.routers.assistant.acl_first_search", new_callable=AsyncMock
+                ) as mock_search,
+                patch(
+                    "tessera_api.routers.assistant.generate_answer", new_callable=AsyncMock
+                ) as mock_gen,
+                patch("tessera_api.routers.assistant.write_audit", new_callable=AsyncMock),
+            ):
+                mock_space = AsyncMock()
+                mock_space.list_by_company = AsyncMock(return_value=[a_space])
+                mock_space.get_by_id = AsyncMock(return_value=a_space)
+                mock_space_cls.return_value = mock_space
+
+                mock_embed = AsyncMock()
+                mock_embed.embed = AsyncMock(return_value=[[0.1] * 384])
+                mock_embed_cls.return_value = mock_embed
+
+                mock_search.return_value = []
+
+                from tessera_api.rag.assistant import DontKnowResponse
+                mock_gen.return_value = DontKnowResponse(confidence=0.0)
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    resp = client.post(
+                        "/v1/assistant/answer",
+                        json={"query": "anything"},
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert resp.status_code == 200
+        mock_space.list_by_company.assert_awaited_once_with(company_a_id)
+        space_ids = mock_search.await_args.kwargs["space_ids"]
+        assert a_space.id in space_ids
+        assert b_space.id not in space_ids
+
+    def test_documents_resolve_only_active_company_spaces(self, legacy_global_admin_setup):
+        """GET /documents active as A (legacy is_admin) scopes the doc query to A's spaces."""
+        token_a, company_a_id, company_b_id = legacy_global_admin_setup
+        a_space = _make_space(company_a_id)
+        b_space = _make_space(company_b_id)
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.documents.get_db", _mock_db()),
+                patch("tessera_api.routers.documents.SqlSpaceRepository") as mock_space_cls,
+                patch("tessera_api.routers.documents.SqlDocumentRepository") as mock_doc_cls,
+            ):
+                mock_space = AsyncMock()
+                mock_space.list_by_company = AsyncMock(return_value=[a_space])
+                mock_space_cls.return_value = mock_space
+
+                mock_doc = AsyncMock()
+                mock_doc.list_by_space_ids_for_company = AsyncMock(return_value=[])
+                mock_doc_cls.return_value = mock_doc
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    resp = client.get(
+                        "/v1/documents",
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert resp.status_code == 200
+        mock_space.list_by_company.assert_awaited_once_with(company_a_id)
+        # the document query is scoped to A's space ids AND A's company id; B never appears.
+        call = mock_doc.list_by_space_ids_for_company.await_args
+        passed_space_ids, passed_company_id = call.args[0], call.args[1]
+        assert a_space.id in passed_space_ids
+        assert b_space.id not in passed_space_ids
+        assert passed_company_id == company_a_id

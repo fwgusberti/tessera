@@ -47,9 +47,6 @@ class SpaceRepository(ABC):
     async def list_by_company(self, company_id: UUID) -> list[Space]: ...
 
     @abstractmethod
-    async def list_for_user(self, user: User) -> list[Space]: ...
-
-    @abstractmethod
     async def create_role_permission(self, permission: RolePermission) -> RolePermission: ...
 
     @abstractmethod

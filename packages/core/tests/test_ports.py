@@ -1,15 +1,44 @@
 """Smoke tests for port interfaces — verify they can be subclassed."""
 
+import inspect
 import uuid
 from typing import Iterator
 from uuid import UUID
 
 import pytest
 
-from tessera_core.domain.entities import Confidentiality, Document, DocumentLifecycleState
+from tessera_core.domain.entities import Confidentiality, Document, DocumentLifecycleState, Space
 from tessera_core.ports.connector import ArtifactRecord, ConnectorPlugin
 from tessera_core.ports.providers import EmbeddingProvider, LLMProvider
-from tessera_core.ports.repositories import DocumentRepository
+from tessera_core.ports.repositories import DocumentRepository, SpaceRepository
+
+
+class TestSpaceRepositoryPort:
+    """Contract C-006 (Constitution Principle VI): the domain port exposes no
+    unscoped, ``is_admin``-driven space query. The only multi-tenant space-list
+    method without a ``company_id`` argument is ``list_all()`` — reachable solely
+    from the audited operator surface."""
+
+    def test_space_repository_has_no_list_for_user(self):
+        """``list_for_user`` (is_admin → all spaces; else unscoped group-join) is gone."""
+        assert not hasattr(SpaceRepository, "list_for_user")
+
+    def test_list_all_is_the_only_unscoped_space_list_method(self):
+        """Every method returning ``list[Space]`` is company-scoped except ``list_all``."""
+        space_list_methods = [
+            name
+            for name in dir(SpaceRepository)
+            if name.startswith("list")
+            and callable(getattr(SpaceRepository, name))
+            and inspect.signature(getattr(SpaceRepository, name)).return_annotation == list[Space]
+        ]
+        unscoped = [
+            name
+            for name in space_list_methods
+            if "company_id" not in inspect.signature(getattr(SpaceRepository, name)).parameters
+        ]
+        assert unscoped == ["list_all"]
+        assert "list_for_user" not in space_list_methods
 
 
 class ConcreteConnector(ConnectorPlugin):

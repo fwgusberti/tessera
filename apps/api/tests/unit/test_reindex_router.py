@@ -45,8 +45,10 @@ def _auth_patch(user_id: str | None = None, company_admin: bool = False):
 
 def _admin_auth_patch(user_id: str | None = None, is_admin: bool = False):
     uid = user_id or str(uuid.uuid4())
+    # admin.py imports require_user at module level (test-patchability convention),
+    # so patch the router-bound name rather than the oidc source.
     return patch(
-        "tessera_api.auth.oidc.require_user",
+        "tessera_api.routers.admin.require_user",
         new=AsyncMock(return_value={"sub": uid, "id": uid, "email": "test@test.com", "is_admin": is_admin}),
     )
 
@@ -304,9 +306,9 @@ def test_bulk_reindex_admin_dispatches_for_unchunked_docs():
 
     with (
         _admin_auth_patch(is_admin=True),
-        patch("tessera_api.adapters.database.get_db", _fake_get_db),
+        patch("tessera_api.routers.admin.get_db", _fake_get_db),
         patch(
-            "tessera_api.adapters.celery.get_celery_app",
+            "tessera_api.routers.admin.get_celery_app",
             return_value=MagicMock(send_task=mock_send_task),
         ),
     ):
@@ -352,9 +354,9 @@ def test_bulk_reindex_skips_docs_with_existing_chunks():
 
     with (
         _admin_auth_patch(is_admin=True),
-        patch("tessera_api.adapters.database.get_db", _fake_get_db),
+        patch("tessera_api.routers.admin.get_db", _fake_get_db),
         patch(
-            "tessera_api.adapters.celery.get_celery_app",
+            "tessera_api.routers.admin.get_celery_app",
             return_value=MagicMock(send_task=mock_send_task),
         ),
     ):
