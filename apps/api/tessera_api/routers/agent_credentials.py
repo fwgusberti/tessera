@@ -3,8 +3,9 @@
 Company-scoped (feature 035): issuance requires the caller to administer the
 active company, binds the credential to that company, and validates that every
 scoped space belongs to it (FR-006). Revocation only ever touches credentials
-owned by the active company. Cross-company attempts are audited as
-``cross_tenant_denied`` and return the generic 403 body.
+owned by the active company. Cross-company by-ID attempts are audited as
+``cross_tenant_denied`` and return a generic 404 body (indistinguishable from
+absent, FR-004).
 """
 
 from __future__ import annotations
@@ -32,10 +33,11 @@ class CreateCredentialRequest(BaseModel):
     max_confidentiality: Confidentiality = Confidentiality.INTERNAL
 
 
-def _forbidden() -> HTTPException:
+def _not_found() -> HTTPException:
+    """Generic 404 for cross-company by-ID access — indistinguishable from absent (FR-004)."""
     return HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail={"error": {"code": "forbidden", "message": "Access denied"}},
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"error": {"code": "not_found", "message": "Not found"}},
     )
 
 
@@ -77,7 +79,7 @@ async def create_credential(body: CreateCredentialRequest, request: Request) -> 
         await _audit_cross_tenant_denied(
             actor_id, credential_id, company_id, {"space_id": str(invalid_space_id)}
         )
-        raise _forbidden()
+        raise _not_found()
 
     # Generate a random token — shown once
     raw_token = secrets.token_urlsafe(32)
@@ -120,7 +122,7 @@ async def revoke_credential(credential_id: UUID, request: Request) -> dict:
     if existing is None:
         # Not ours — leave the token active and deny indistinguishably.
         await _audit_cross_tenant_denied(actor_id, credential_id, company_id)
-        raise _forbidden()
+        raise _not_found()
 
     async with get_db() as session:
         repo = SqlAgentCredentialRepository(session)

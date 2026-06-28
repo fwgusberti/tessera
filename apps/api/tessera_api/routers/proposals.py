@@ -1,9 +1,11 @@
 """Proposal review endpoints: list, get, approve, reject.
 
-All handlers are scoped to the active company (feature 035): a proposal is only
-reachable when its document's space belongs to the caller's active company. A
-cross-company access is audited as ``cross_tenant_denied`` and returns the same
-generic 403 body as a missing proposal (indistinguishable — FR-010 / SC-005).
+All handlers are scoped to the active company (feature 035/036): a proposal is
+only reachable when its document's space belongs to the caller's active company.
+A cross-company by-ID access is audited as ``cross_tenant_denied`` and returns the
+same generic 404 body as a missing proposal (indistinguishable — FR-004 / SC-003).
+Approve/reject authority is per-company admin (or in-company publish rights); an
+in-company non-admin without those rights still receives 403.
 """
 
 from __future__ import annotations
@@ -23,7 +25,11 @@ from tessera_api.adapters.repo import (
     SqlSpaceRepository,
     SqlUserRepository,
 )
-from tessera_api.auth.oidc import require_company_context
+from tessera_api.auth.oidc import (
+    is_company_admin,
+    require_company_context,
+    require_company_member,
+)
 from tessera_core.domain.entities import DocumentLifecycleState, DocumentVersion
 from tessera_core.permissions.access import (
     AccessContext,
@@ -44,6 +50,14 @@ def _forbidden() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail={"error": {"code": "forbidden", "message": "Access denied"}},
+    )
+
+
+def _not_found() -> HTTPException:
+    """Generic 404 for cross-company by-ID access — indistinguishable from absent (FR-004)."""
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"error": {"code": "not_found", "message": "Not found"}},
     )
 
 
@@ -83,7 +97,7 @@ async def get_proposal(proposal_id: UUID, request: Request) -> dict:
         proposal = await proposal_repo.get_by_id_for_company(proposal_id, company_id)
         if proposal is None:
             await _audit_cross_tenant_denied(UUID(user_info["sub"]), proposal_id, company_id)
-            raise _forbidden()
+            raise _not_found()
 
         doc = await doc_repo.get_by_id_for_company(proposal.document_id, company_id)
 
@@ -96,7 +110,8 @@ async def get_proposal(proposal_id: UUID, request: Request) -> dict:
 
 @router.post("/proposals/{proposal_id}/approve")
 async def approve_proposal(proposal_id: UUID, request: Request) -> dict:
-    user_info, company_id = await require_company_context(request)
+    user_info, company_id, caller_membership = await require_company_member(request)
+    company_admin = is_company_admin(caller_membership)
     actor_id = UUID(user_info["sub"])
     approver_id = user_info.get("id")
 
@@ -110,18 +125,21 @@ async def approve_proposal(proposal_id: UUID, request: Request) -> dict:
         proposal = await proposal_repo.get_by_id_for_company(proposal_id, company_id)
         if proposal is None:
             await _audit_cross_tenant_denied(actor_id, proposal_id, company_id)
-            raise _forbidden()
+            raise _not_found()
 
         doc = await doc_repo.get_by_id_for_company(proposal.document_id, company_id)
         if doc is None:
             await _audit_cross_tenant_denied(actor_id, proposal_id, company_id)
-            raise _forbidden()
+            raise _not_found()
 
         # In-company publish rights (FR-004): caller must be able to publish the
-        # target document's space, even within their own company.
+        # target document's space (space role or company admin), even within their
+        # own company. An in-company non-admin without publish rights gets 403.
         actor = await user_repo.get_by_id(actor_id)
         permissions = await space_repo.list_role_permissions(doc.space_id)
-        ctx = AccessContext(user=actor, space_permissions=permissions)
+        ctx = AccessContext(
+            user=actor, space_permissions=permissions, is_company_admin=company_admin
+        )
         if can_approve_proposal(ctx=ctx, document=doc) == AccessDecision.DENY:
             raise _forbidden()
 
@@ -160,7 +178,8 @@ async def approve_proposal(proposal_id: UUID, request: Request) -> dict:
 
 @router.post("/proposals/{proposal_id}/reject")
 async def reject_proposal(proposal_id: UUID, body: RejectRequest, request: Request) -> dict:
-    user_info, company_id = await require_company_context(request)
+    user_info, company_id, caller_membership = await require_company_member(request)
+    company_admin = is_company_admin(caller_membership)
     actor_id = UUID(user_info["sub"])
     rejector_id = user_info.get("id")
 
@@ -173,17 +192,19 @@ async def reject_proposal(proposal_id: UUID, body: RejectRequest, request: Reque
         proposal = await proposal_repo.get_by_id_for_company(proposal_id, company_id)
         if proposal is None:
             await _audit_cross_tenant_denied(actor_id, proposal_id, company_id)
-            raise _forbidden()
+            raise _not_found()
 
         doc = await doc_repo.get_by_id_for_company(proposal.document_id, company_id)
         if doc is None:
             await _audit_cross_tenant_denied(actor_id, proposal_id, company_id)
-            raise _forbidden()
+            raise _not_found()
 
         # In-company publish rights (FR-004).
         actor = await user_repo.get_by_id(actor_id)
         permissions = await space_repo.list_role_permissions(doc.space_id)
-        ctx = AccessContext(user=actor, space_permissions=permissions)
+        ctx = AccessContext(
+            user=actor, space_permissions=permissions, is_company_admin=company_admin
+        )
         if can_approve_proposal(ctx=ctx, document=doc) == AccessDecision.DENY:
             raise _forbidden()
 

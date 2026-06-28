@@ -22,12 +22,24 @@ def _make_app():
     return app
 
 
-def _auth_patch(user_id: str | None = None, is_admin: bool = False):
+def _auth_patch(user_id: str | None = None, company_admin: bool = False):
+    """Patch require_company_member; ``company_admin`` controls per-company authority."""
+    from datetime import UTC, datetime
+
+    from tessera_core.domain.entities import CompanyMembership, CompanyRole
+
     uid = user_id or str(uuid.uuid4())
-    info = {"sub": uid, "id": uid, "email": "test@test.com", "is_admin": is_admin}
+    info = {"sub": uid, "id": uid, "email": "test@test.com", "is_admin": False}
+    membership = CompanyMembership(
+        id=uuid.uuid4(),
+        user_id=uuid.UUID(uid),
+        company_id=uuid.uuid4(),
+        role=CompanyRole.ADMIN if company_admin else CompanyRole.MEMBER,
+        joined_at=datetime.now(UTC),
+    )
     return patch(
-        "tessera_api.routers.documents.require_company_context",
-        new=AsyncMock(return_value=(info, uuid.uuid4())),
+        "tessera_api.routers.documents.require_company_member",
+        new=AsyncMock(return_value=(info, uuid.uuid4(), membership)),
     )
 
 
@@ -107,7 +119,7 @@ def test_reindex_owner_dispatches_task():
     mock_send_task = MagicMock()
 
     with (
-        _auth_patch(user_id=str(owner_id), is_admin=False),
+        _auth_patch(user_id=str(owner_id)),
         patch("tessera_api.routers.documents.get_db", _fake_get_db),
         patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
         patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
@@ -155,7 +167,7 @@ def test_reindex_admin_dispatches_task():
     mock_send_task = MagicMock()
 
     with (
-        _auth_patch(user_id=str(admin_id), is_admin=True),
+        _auth_patch(user_id=str(admin_id), company_admin=True),
         patch("tessera_api.routers.documents.get_db", _fake_get_db),
         patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
         patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
@@ -193,7 +205,7 @@ def test_reindex_non_owner_returns_403():
         yield mock_session
 
     with (
-        _auth_patch(user_id=str(other_id), is_admin=False),
+        _auth_patch(user_id=str(other_id)),
         patch("tessera_api.routers.documents.get_db", _fake_get_db),
         patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
         patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=MagicMock()),
@@ -207,7 +219,7 @@ def test_reindex_non_owner_returns_403():
 # ── T011: missing document returns 403 (hides existence) ─────────────────────
 
 def test_reindex_missing_document_returns_404():
-    """Reindexing a document not found in the company scope returns 403 (hides existence)."""
+    """Reindexing a document not found in the company scope returns 404 (hides existence)."""
     app = _make_app()
     doc_id = uuid.uuid4()
 
@@ -220,7 +232,7 @@ def test_reindex_missing_document_returns_404():
         yield mock_session
 
     with (
-        _auth_patch(is_admin=True),
+        _auth_patch(company_admin=True),
         patch("tessera_api.routers.documents.get_db", _fake_get_db),
         patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
         patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=MagicMock()),
@@ -228,7 +240,7 @@ def test_reindex_missing_document_returns_404():
         with TestClient(app, raise_server_exceptions=False) as client:
             response = client.post(f"/v1/documents/{doc_id}/reindex")
 
-    assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text}"
+    assert response.status_code == 404, f"Expected 404, got {response.status_code}: {response.text}"
 
 
 # ── T012: draft document returns 400 ─────────────────────────────────────────
@@ -252,7 +264,7 @@ def test_reindex_draft_document_returns_400():
         yield mock_session
 
     with (
-        _auth_patch(user_id=str(owner_id), is_admin=False),
+        _auth_patch(user_id=str(owner_id)),
         patch("tessera_api.routers.documents.get_db", _fake_get_db),
         patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
         patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=MagicMock()),

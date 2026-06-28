@@ -58,7 +58,7 @@ echo -e "${CY}[api    ]${NC} Running migrations..."
   DATABASE_URL="$DB" \
   REDIS_URL="$REDIS" \
   SECRET_KEY=dev-secret-key \
-  FRONTEND_URL=http://"$HOST":3000 \
+  FRONTEND_URL="http://$HOST:3000" \
   OLLAMA_BASE_URL=http://localhost:11434 \
   ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   uv run uvicorn tessera_api.main:app --reload --host 0.0.0.0 --port 8000 2>&1 | prefix "$CY" "api") &

@@ -2,8 +2,9 @@
 
 Company-scoped (feature 035): creating a connector requires the target space to
 belong to a company the caller administers, and syncing requires the connector to
-belong to it. A cross-company attempt is audited as ``cross_tenant_denied`` and
-returns the generic 403 body — and crucially enqueues no Celery sync job.
+belong to it. A cross-company by-ID attempt is audited as ``cross_tenant_denied``
+and returns a generic 404 body (indistinguishable from absent, FR-004) — and
+crucially enqueues no Celery sync job.
 """
 
 from __future__ import annotations
@@ -37,10 +38,11 @@ class CreateConnectorRequest(BaseModel):
     schedule: str | None = None
 
 
-def _forbidden() -> HTTPException:
+def _not_found() -> HTTPException:
+    """Generic 404 for cross-company by-ID access — indistinguishable from absent (FR-004)."""
     return HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail={"error": {"code": "forbidden", "message": "Access denied"}},
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"error": {"code": "not_found", "message": "Not found"}},
     )
 
 
@@ -70,7 +72,7 @@ async def create_connector(space_id: UUID, body: CreateConnectorRequest, request
 
     if space is None:
         await _audit_cross_tenant_denied(actor_id, "space", space_id, company_id)
-        raise _forbidden()
+        raise _not_found()
 
     connector = Connector(
         space_id=space_id,
@@ -96,7 +98,7 @@ async def sync_connector(connector_id: UUID, request: Request) -> dict:
     if connector is None:
         # Deny and audit BEFORE enqueuing any work (FR-005).
         await _audit_cross_tenant_denied(actor_id, "connector", connector_id, company_id)
-        raise _forbidden()
+        raise _not_found()
 
     task = sync_connector_task.delay(str(connector_id))
     return {"job_id": task.id}

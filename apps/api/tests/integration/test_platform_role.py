@@ -135,19 +135,30 @@ class TestPlatformRoleEndpoint:
         assert exc_info.value.status_code == 403
 
     @pytest.mark.anyio
-    async def test_global_admin_can_access_space_members_without_membership(self):
+    async def test_company_admin_can_access_space_members_without_membership(self):
+        """A company admin (not a space member) can list members of a space in their
+        own company — authority comes from the per-company admin role, not the legacy
+        global flag (feature 036)."""
+        from datetime import UTC, datetime
+
+        from tessera_core.domain.entities import CompanyMembership, CompanyRole
         from tessera_api.routers.members import list_members
 
-        global_admin_id = uuid.uuid4()
+        company_admin_id = uuid.uuid4()
         space_id = uuid.uuid4()
-        global_admin = _make_user(global_admin_id, is_admin=True)
+        company_admin = _make_user(company_admin_id, is_admin=False)
         memberships = [_membership(space_id, uuid.uuid4(), SpaceRole.VIEWER)]
 
         mock_user_repo = AsyncMock()
-        mock_user_repo.get_by_id.return_value = global_admin
+        mock_user_repo.get_by_id.return_value = company_admin
 
         mock_membership_repo = AsyncMock()
         mock_membership_repo.list_by_space.return_value = memberships
+
+        caller_membership = CompanyMembership(
+            id=uuid.uuid4(), user_id=company_admin_id, company_id=uuid.uuid4(),
+            role=CompanyRole.ADMIN, joined_at=datetime.now(UTC),
+        )
 
         with (
             patch("tessera_api.routers.members.get_db") as mock_get_db,
@@ -156,11 +167,12 @@ class TestPlatformRoleEndpoint:
                 "tessera_api.routers.members.SqlSpaceMembershipRepository"
             ) as mock_membership_cls,
             patch(
-                "tessera_api.routers.members.require_company_context",
+                "tessera_api.routers.members.require_company_member",
                 new=AsyncMock(
                     return_value=(
-                        {"id": str(global_admin_id), "sub": str(global_admin_id), "is_admin": True},
+                        {"id": str(company_admin_id), "sub": str(company_admin_id), "is_admin": False},
                         uuid.uuid4(),
+                        caller_membership,
                     )
                 ),
             ),

@@ -24,9 +24,10 @@ class MembershipService:
         space_id: UUID,
         user_id: UUID,
         role: SpaceRole,
+        is_company_admin: bool = False,
     ) -> SpaceMembership:
         memberships = await self._repo.list_by_space(space_id)
-        if not can_manage_members(actor, space_id, memberships):
+        if not can_manage_members(actor, space_id, memberships, is_company_admin):
             raise PermissionError("Only space admins can invite members")
 
         existing = await self._repo.get(space_id, user_id)
@@ -63,9 +64,10 @@ class MembershipService:
         space_id: UUID,
         user_id: UUID,
         new_role: SpaceRole,
+        is_company_admin: bool = False,
     ) -> SpaceMembership:
         memberships = await self._repo.list_by_space(space_id)
-        if not can_manage_members(actor, space_id, memberships):
+        if not can_manage_members(actor, space_id, memberships, is_company_admin):
             raise PermissionError("Only space admins can change member roles")
 
         target = next((m for m in memberships if m.user_id == user_id), None)
@@ -103,9 +105,10 @@ class MembershipService:
         actor: User,
         space_id: UUID,
         user_id: UUID,
+        is_company_admin: bool = False,
     ) -> None:
         memberships = await self._repo.list_by_space(space_id)
-        if not can_manage_members(actor, space_id, memberships):
+        if not can_manage_members(actor, space_id, memberships, is_company_admin):
             raise PermissionError("Only space admins can remove members")
 
         target = next((m for m in memberships if m.user_id == user_id), None)

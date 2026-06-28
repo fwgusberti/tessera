@@ -32,6 +32,7 @@ class AccessDecision(str, Enum):
 class AccessContext:
     user: User
     space_permissions: list[RolePermission]
+    is_company_admin: bool = False
 
 
 def resolve_user_role(
@@ -67,14 +68,14 @@ def can_read_document(ctx: AccessContext, document: Document) -> AccessDecision:
 
     Rules:
     - restricted documents are never readable (regardless of role or admin status).
-    - global admin can read any non-restricted document.
+    - a company admin can read any non-restricted document in their own company.
     - reader can only read published documents; contributor+ can read all states.
     - user's max_confidentiality must be >= document.confidentiality.
     """
     if document.confidentiality == Confidentiality.RESTRICTED:
         return AccessDecision.DENY
 
-    if ctx.user.is_admin:
+    if ctx.is_company_admin:
         return AccessDecision.ALLOW
 
     perm = _resolve_permission(ctx.user, document.space_id, ctx.space_permissions)
@@ -97,7 +98,7 @@ def can_read_document(ctx: AccessContext, document: Document) -> AccessDecision:
 
 def can_publish_document(ctx: AccessContext, document: Document) -> AccessDecision:
     """Decide if the user may publish the document (owner or space admin)."""
-    if ctx.user.is_admin:
+    if ctx.is_company_admin:
         return AccessDecision.ALLOW
 
     perm = _resolve_permission(ctx.user, document.space_id, ctx.space_permissions)
@@ -121,7 +122,7 @@ def can_approve_proposal(ctx: AccessContext, document: Document) -> AccessDecisi
 
 def can_admin_space(ctx: AccessContext, space_id: UUID) -> bool:
     """Return True if the user has administrative rights over the given space."""
-    if ctx.user.is_admin:
+    if ctx.is_company_admin:
         return True
     perm = _resolve_permission(ctx.user, space_id, ctx.space_permissions)
     return perm is not None and perm.role == UserRole.SPACE_ADMIN
@@ -150,9 +151,15 @@ def effective_space_role(
     user: User,
     space_id: UUID,
     memberships: list[SpaceMembership],
+    is_company_admin: bool = False,
 ) -> SpaceRole | None:
-    """Global admin is implicit ADMIN in every space."""
-    if user.is_admin:
+    """A company admin is implicit ADMIN in spaces of their own company.
+
+    Callers guarantee the space belongs to the active company before passing
+    ``is_company_admin=True`` (feature 035 ``validate_space_for_company``), so this
+    confers no cross-company reach. Defaults fail-closed (non-admin).
+    """
+    if is_company_admin:
         return SpaceRole.ADMIN
     return get_space_membership_role(user.id, space_id, memberships)
 
@@ -161,9 +168,10 @@ def can_write_document(
     user: User,
     space_id: UUID,
     memberships: list[SpaceMembership],
+    is_company_admin: bool = False,
 ) -> bool:
     """True if effective role is EDITOR or ADMIN."""
-    role = effective_space_role(user, space_id, memberships)
+    role = effective_space_role(user, space_id, memberships, is_company_admin)
     return role in (SpaceRole.EDITOR, SpaceRole.ADMIN)
 
 
@@ -171,17 +179,19 @@ def can_manage_members(
     user: User,
     space_id: UUID,
     memberships: list[SpaceMembership],
+    is_company_admin: bool = False,
 ) -> bool:
     """True if effective role is ADMIN."""
-    return effective_space_role(user, space_id, memberships) == SpaceRole.ADMIN
+    return effective_space_role(user, space_id, memberships, is_company_admin) == SpaceRole.ADMIN
 
 
 def can_read_space_document(
     user: User,
     space_id: UUID,
     memberships: list[SpaceMembership],
+    is_company_admin: bool = False,
 ) -> bool:
-    """True if user is any member of the space or a global admin."""
-    if user.is_admin:
+    """True if user is any member of the space or a company admin (own company)."""
+    if is_company_admin:
         return True
     return get_space_membership_role(user.id, space_id, memberships) is not None

@@ -20,7 +20,11 @@ from tessera_api.adapters.repo import (
     SqlSpaceRepository,
     SqlUserRepository,
 )
-from tessera_api.auth.oidc import require_company_context
+from tessera_api.auth.oidc import (
+    is_company_admin,
+    require_company_context,
+    require_company_member,
+)
 from tessera_core.domain.entities import (
     Confidentiality,
     Document,
@@ -32,6 +36,14 @@ from tessera_core.services.lifecycle import assign_owner
 from tessera_core.services.lifecycle import publish_document as lifecycle_publish
 
 router = APIRouter(tags=["documents"])
+
+
+def _not_found() -> HTTPException:
+    """Generic 404 for cross-company by-ID access — indistinguishable from absent (FR-004)."""
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"error": {"code": "not_found", "message": "Not found"}},
+    )
 
 
 class CreateDocumentRequest(BaseModel):
@@ -69,10 +81,7 @@ async def list_documents(
                     entity_id=space_id,
                     metadata={"company_id": str(company_id)},
                 )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": "forbidden", "message": "Access denied"}},
-                )
+                raise _not_found()
             docs = await doc_repo.list_by_space(space_id, state_enum)
         else:
             company_spaces = await space_repo.list_by_company(company_id)
@@ -84,7 +93,8 @@ async def list_documents(
 
 @router.post("/documents", status_code=status.HTTP_201_CREATED)
 async def create_document(body: CreateDocumentRequest, request: Request) -> dict:
-    user_info, company_id = await require_company_context(request)
+    user_info, company_id, caller_membership = await require_company_member(request)
+    company_admin = is_company_admin(caller_membership)
     user_id_str = user_info.get("id") or user_info.get("sub")
     owner_id = UUID(user_id_str) if user_id_str else None
 
@@ -102,10 +112,7 @@ async def create_document(body: CreateDocumentRequest, request: Request) -> dict
                 entity_id=body.space_id,
                 metadata={"company_id": str(company_id)},
             )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": {"code": "forbidden", "message": "Access denied"}},
-            )
+            raise _not_found()
 
         user_repo = SqlUserRepository(session)
         actor = await user_repo.get_by_id(owner_id) if owner_id else None
@@ -116,7 +123,9 @@ async def create_document(body: CreateDocumentRequest, request: Request) -> dict
         if actor is not None:
             membership_repo = SqlSpaceMembershipRepository(session)
             memberships = await membership_repo.list_by_space(body.space_id)
-            if not can_write_document(actor, body.space_id, memberships):
+            if not can_write_document(
+                actor, body.space_id, memberships, is_company_admin=company_admin
+            ):
                 raise HTTPException(
                     status_code=403,
                     detail="You must be an Editor or Admin to create documents in this space",
@@ -166,10 +175,7 @@ async def get_document(document_id: UUID, request: Request) -> dict:
                 entity_id=document_id,
                 metadata={"company_id": str(company_id)},
             )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": {"code": "forbidden", "message": "Access denied"}},
-            )
+            raise _not_found()
 
         version = None
         if doc.current_version_id:
@@ -198,10 +204,7 @@ async def list_versions(document_id: UUID, request: Request) -> dict:
                 entity_id=document_id,
                 metadata={"company_id": str(company_id)},
             )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": {"code": "forbidden", "message": "Access denied"}},
-            )
+            raise _not_found()
         repo = SqlDocumentVersionRepository(session)
         versions = await repo.list_by_document(document_id)
     return {"versions": [v.model_dump() for v in versions]}
@@ -229,10 +232,7 @@ async def publish_document(document_id: UUID, request: Request) -> dict:
                 entity_id=document_id,
                 metadata={"company_id": str(company_id)},
             )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": {"code": "forbidden", "message": "Access denied"}},
-            )
+            raise _not_found()
 
         if doc.owner_user_id is None and publisher_id:
             doc = assign_owner(doc, publisher_id)
@@ -270,10 +270,10 @@ async def publish_document(document_id: UUID, request: Request) -> dict:
 
 @router.post("/documents/{document_id}/reindex")
 async def reindex_document(document_id: UUID, request: Request) -> dict:
-    user_info, company_id = await require_company_context(request)
+    user_info, company_id, caller_membership = await require_company_member(request)
+    company_admin = is_company_admin(caller_membership)
     user_id_str = user_info.get("id") or user_info.get("sub")
     user_id = UUID(user_id_str) if user_id_str else None
-    is_admin = user_info.get("is_admin", False)
 
     async with get_db() as session:
         doc_repo = SqlDocumentRepository(session)
@@ -291,12 +291,9 @@ async def reindex_document(document_id: UUID, request: Request) -> dict:
                 entity_id=document_id,
                 metadata={"company_id": str(company_id)},
             )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": {"code": "forbidden", "message": "Access denied"}},
-            )
+            raise _not_found()
 
-        if not is_admin and doc.owner_user_id != user_id:
+        if not company_admin and doc.owner_user_id != user_id:
             raise HTTPException(
                 status_code=403, detail="Only the document owner or an admin may reindex"
             )

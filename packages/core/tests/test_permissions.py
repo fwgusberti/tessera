@@ -156,16 +156,23 @@ class TestCanReadDocument:
         ctx = AccessContext(user=user, space_permissions=perms)
         assert can_read_document(ctx=ctx, document=doc) == AccessDecision.DENY
 
-    def test_global_admin_can_read_any_non_restricted_document(self):
-        user = make_user(groups=[], is_admin=True)
+    def test_company_admin_can_read_any_non_restricted_document(self):
+        user = make_user(groups=[])
         doc = make_document(confidentiality=Confidentiality.CONFIDENTIAL)
-        ctx = AccessContext(user=user, space_permissions=[])
+        ctx = AccessContext(user=user, space_permissions=[], is_company_admin=True)
         assert can_read_document(ctx=ctx, document=doc) == AccessDecision.ALLOW
 
-    def test_global_admin_cannot_read_restricted_document(self):
-        user = make_user(groups=[], is_admin=True)
+    def test_company_admin_cannot_read_restricted_document(self):
+        user = make_user(groups=[])
         doc = make_document(confidentiality=Confidentiality.RESTRICTED)
-        ctx = AccessContext(user=user, space_permissions=[])
+        ctx = AccessContext(user=user, space_permissions=[], is_company_admin=True)
+        assert can_read_document(ctx=ctx, document=doc) == AccessDecision.DENY
+
+    def test_global_is_admin_does_not_grant_read(self):
+        """The legacy global flag confers no read authority over company data."""
+        user = make_user(groups=[], is_admin=True)
+        doc = make_document(confidentiality=Confidentiality.CONFIDENTIAL)
+        ctx = AccessContext(user=user, space_permissions=[], is_company_admin=False)
         assert can_read_document(ctx=ctx, document=doc) == AccessDecision.DENY
 
 
@@ -233,13 +240,45 @@ class TestCanAdminSpace:
         ctx = AccessContext(user=user, space_permissions=perms)
         assert can_admin_space(ctx=ctx, space_id=SPACE_ID)
 
-    def test_global_admin_can_admin(self):
-        user = make_user(groups=[], is_admin=True)
-        ctx = AccessContext(user=user, space_permissions=[])
+    def test_company_admin_can_admin(self):
+        user = make_user(groups=[])
+        ctx = AccessContext(user=user, space_permissions=[], is_company_admin=True)
         assert can_admin_space(ctx=ctx, space_id=SPACE_ID)
+
+    def test_global_is_admin_does_not_grant_space_admin(self):
+        user = make_user(groups=[], is_admin=True)
+        ctx = AccessContext(user=user, space_permissions=[], is_company_admin=False)
+        assert not can_admin_space(ctx=ctx, space_id=SPACE_ID)
 
     def test_reader_cannot_admin(self):
         user = make_user(groups=["engineering"])
         perms = [make_permission(role=UserRole.READER)]
         ctx = AccessContext(user=user, space_permissions=perms)
+        assert not can_admin_space(ctx=ctx, space_id=SPACE_ID)
+
+
+class TestCompanyAdminAuthority:
+    """Feature 036: authority over company data comes from is_company_admin, not the
+    legacy global ``user.is_admin`` flag."""
+
+    def test_company_admin_can_approve_proposal(self):
+        user = make_user(groups=[])
+        doc = make_document()
+        ctx = AccessContext(user=user, space_permissions=[], is_company_admin=True)
+        assert can_approve_proposal(ctx=ctx, document=doc) == AccessDecision.ALLOW
+
+    def test_company_admin_can_publish(self):
+        user = make_user(groups=[])
+        doc = make_document(state=DocumentLifecycleState.INGESTED)
+        ctx = AccessContext(user=user, space_permissions=[], is_company_admin=True)
+        assert can_publish_document(ctx=ctx, document=doc) == AccessDecision.ALLOW
+
+    def test_default_context_is_fail_closed(self):
+        """Omitting is_company_admin defaults to non-admin (no authority)."""
+        user = make_user(groups=[], is_admin=True)
+        doc = make_document()
+        ctx = AccessContext(user=user, space_permissions=[])
+        assert ctx.is_company_admin is False
+        assert can_publish_document(ctx=ctx, document=doc) == AccessDecision.DENY
+        assert can_approve_proposal(ctx=ctx, document=doc) == AccessDecision.DENY
         assert not can_admin_space(ctx=ctx, space_id=SPACE_ID)

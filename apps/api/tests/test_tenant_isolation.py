@@ -54,6 +54,8 @@ def _mock_db():
 
 # Generic denial body — must be identical for "missing" and "other company" (FR-010/SC-005).
 _GENERIC_FORBIDDEN = {"error": {"code": "forbidden", "message": "Access denied"}}
+# Generic not-found body for cross-company by-ID denial (feature 036, 403 -> 404).
+_GENERIC_NOT_FOUND = {"error": {"code": "not_found", "message": "Not found"}}
 
 
 @contextmanager
@@ -150,7 +152,7 @@ class TestUS1SpaceIsolation:
                         headers={"Authorization": f"Bearer {token_b}"},
                     )
 
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     def test_space_create_binds_to_session_company(self, two_company_setup):
         """POST /spaces with token_a returns a space whose company_id matches alpha's company id."""
@@ -212,7 +214,7 @@ class TestUS2DocumentIsolation:
                         headers={"Authorization": f"Bearer {token_b}"},
                     )
 
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     def test_company_a_cannot_create_document_in_company_b_space(self, two_company_setup):
         """POST /documents with token_b and space_id=alpha_space_id returns 403."""
@@ -242,7 +244,7 @@ class TestUS2DocumentIsolation:
                         headers={"Authorization": f"Bearer {token_b}"},
                     )
 
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     def test_company_a_search_returns_only_company_a_results(self, two_company_setup):
         """POST /search with token_b returns 0 results for Alpha-only content."""
@@ -605,8 +607,8 @@ class TestUS1ProposalIsolation:
                         headers={"Authorization": f"Bearer {token_b}"},
                     )
 
-        assert response.status_code == 403
-        assert response.json() == _GENERIC_FORBIDDEN
+        assert response.status_code == 404
+        assert response.json() == _GENERIC_NOT_FOUND
         assert "target_document" not in response.json()
         _assert_cross_tenant_audit(mock_audit, "proposal")
 
@@ -635,7 +637,7 @@ class TestUS1ProposalIsolation:
                             f"/v1/proposals/{uuid.uuid4()}",
                             headers={"Authorization": f"Bearer {token_b}"},
                         )
-            assert resp.status_code == 403
+            assert resp.status_code == 404
             bodies.append(resp.json())
 
         assert bodies[0] == bodies[1]
@@ -670,8 +672,8 @@ class TestUS1ProposalIsolation:
                         headers={"Authorization": f"Bearer {token_b}"},
                     )
 
-        assert response.status_code == 403
-        assert response.json() == _GENERIC_FORBIDDEN
+        assert response.status_code == 404
+        assert response.json() == _GENERIC_NOT_FOUND
         # A's proposal/document/version history were never mutated
         mock_repo.update_state.assert_not_awaited()
         _assert_cross_tenant_audit(mock_audit, "proposal")
@@ -706,8 +708,8 @@ class TestUS1ProposalIsolation:
                         headers={"Authorization": f"Bearer {token_b}"},
                     )
 
-        assert response.status_code == 403
-        assert response.json() == _GENERIC_FORBIDDEN
+        assert response.status_code == 404
+        assert response.json() == _GENERIC_NOT_FOUND
         mock_repo.update_state.assert_not_awaited()
         _assert_cross_tenant_audit(mock_audit, "proposal")
 
@@ -746,8 +748,8 @@ class TestUS2ConnectorIsolation:
                         headers={"Authorization": f"Bearer {token_b}"},
                     )
 
-        assert response.status_code == 403
-        assert response.json() == _GENERIC_FORBIDDEN
+        assert response.status_code == 404
+        assert response.json() == _GENERIC_NOT_FOUND
         mock_conn.create.assert_not_awaited()
         _assert_cross_tenant_audit(mock_audit, "space")
 
@@ -778,8 +780,8 @@ class TestUS2ConnectorIsolation:
                         headers={"Authorization": f"Bearer {token_b}"},
                     )
 
-        assert response.status_code == 403
-        assert response.json() == _GENERIC_FORBIDDEN
+        assert response.status_code == 404
+        assert response.json() == _GENERIC_NOT_FOUND
         mock_task.delay.assert_not_called()
         _assert_cross_tenant_audit(mock_audit, "connector")
 
@@ -820,8 +822,8 @@ class TestUS3AgentCredentialIsolation:
                         headers={"Authorization": f"Bearer {token_b}"},
                     )
 
-        assert response.status_code == 403
-        assert response.json() == _GENERIC_FORBIDDEN
+        assert response.status_code == 404
+        assert response.json() == _GENERIC_NOT_FOUND
         mock_cred.create.assert_not_awaited()
         _assert_cross_tenant_audit(mock_audit, "agent_credential")
 
@@ -853,8 +855,8 @@ class TestUS3AgentCredentialIsolation:
                         headers={"Authorization": f"Bearer {token_b}"},
                     )
 
-        assert response.status_code == 403
-        assert response.json() == _GENERIC_FORBIDDEN
+        assert response.status_code == 404
+        assert response.json() == _GENERIC_NOT_FOUND
         mock_cred.revoke.assert_not_awaited()
         _assert_cross_tenant_audit(mock_audit, "agent_credential")
 
@@ -946,8 +948,8 @@ class TestUS4MemberWriteIsolation:
         ]
         for method, path, body in cases:
             response, mock_audit = self._run_member_write(method, path, token_b, body)
-            assert response.status_code == 403, f"{method} {path} -> {response.status_code}"
-            assert response.json() == _GENERIC_FORBIDDEN
+            assert response.status_code == 404, f"{method} {path} -> {response.status_code}"
+            assert response.json() == _GENERIC_NOT_FOUND
             _assert_cross_tenant_audit(mock_audit, "space")
 
     def test_permission_create_on_other_company_space_denied(self, two_company_setup):
@@ -977,8 +979,8 @@ class TestUS4MemberWriteIsolation:
                         headers={"Authorization": f"Bearer {token_b}"},
                     )
 
-        assert response.status_code == 403
-        assert response.json() == _GENERIC_FORBIDDEN
+        assert response.status_code == 404
+        assert response.json() == _GENERIC_NOT_FOUND
         _assert_cross_tenant_audit(mock_audit, "space")
 
 

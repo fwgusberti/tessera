@@ -26,6 +26,20 @@ def _make_membership(space_id: uuid.UUID, user_id: uuid.UUID, role: SpaceRole) -
     return SpaceMembership(space_id=space_id, user_id=user_id, role=role)
 
 
+def _company_membership(user_id: uuid.UUID, role: "CompanyRole | None" = None) -> "CompanyMembership":
+    from datetime import UTC, datetime
+
+    from tessera_core.domain.entities import CompanyMembership, CompanyRole
+
+    return CompanyMembership(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        company_id=uuid.uuid4(),
+        role=role or CompanyRole.MEMBER,
+        joined_at=datetime.now(UTC),
+    )
+
+
 @asynccontextmanager
 async def _mock_db(session: AsyncMock = None):
     yield session or AsyncMock()
@@ -48,11 +62,12 @@ class TestInviteMemberContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_company_context",
+                "tessera_api.routers.members.require_company_member",
                 new=AsyncMock(
                     return_value=(
                         {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
                         uuid.uuid4(),
+                        _company_membership(actor_id),
                     )
                 ),
             ),
@@ -105,11 +120,12 @@ class TestInviteMemberContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_company_context",
+                "tessera_api.routers.members.require_company_member",
                 new=AsyncMock(
                     return_value=(
                         {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
                         uuid.uuid4(),
+                        _company_membership(actor_id),
                     )
                 ),
             ),
@@ -147,13 +163,18 @@ class TestListMembersContract:
 
         space_id = uuid.uuid4()
         actor_id = uuid.uuid4()
-        target_id = uuid.uuid4()
         memberships = [_make_membership(space_id, actor_id, SpaceRole.ADMIN)]
 
         with (
             patch(
-                "tessera_api.routers.members.require_company_context",
-                new=AsyncMock(return_value=({"sub": str(actor_id), "id": str(actor_id), "is_admin": False}, uuid.uuid4())),
+                "tessera_api.routers.members.require_company_member",
+                new=AsyncMock(
+                    return_value=(
+                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
+                        uuid.uuid4(),
+                        _company_membership(actor_id),
+                    )
+                ),
             ),
             patch(
                 "tessera_api.routers.members.validate_space_for_company",
@@ -197,11 +218,12 @@ class TestGetMyMembershipContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_company_context",
+                "tessera_api.routers.members.require_company_member",
                 new=AsyncMock(
                     return_value=(
                         {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
                         uuid.uuid4(),
+                        _company_membership(actor_id),
                     )
                 ),
             ),
@@ -242,11 +264,12 @@ class TestGetMyMembershipContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_company_context",
+                "tessera_api.routers.members.require_company_member",
                 new=AsyncMock(
                     return_value=(
                         {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
                         uuid.uuid4(),
+                        _company_membership(actor_id),
                     )
                 ),
             ),
@@ -294,11 +317,12 @@ class TestChangeRoleContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_company_context",
+                "tessera_api.routers.members.require_company_member",
                 new=AsyncMock(
                     return_value=(
                         {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
                         uuid.uuid4(),
+                        _company_membership(actor_id),
                     )
                 ),
             ),
@@ -343,11 +367,12 @@ class TestChangeRoleContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_company_context",
+                "tessera_api.routers.members.require_company_member",
                 new=AsyncMock(
                     return_value=(
                         {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
                         uuid.uuid4(),
+                        _company_membership(actor_id),
                     )
                 ),
             ),
@@ -395,11 +420,12 @@ class TestRemoveMemberContract:
 
         with (
             patch(
-                "tessera_api.routers.members.require_company_context",
+                "tessera_api.routers.members.require_company_member",
                 new=AsyncMock(
                     return_value=(
                         {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
                         uuid.uuid4(),
+                        _company_membership(actor_id),
                     )
                 ),
             ),

@@ -140,6 +140,24 @@ async def require_company_context(request: Request) -> tuple[dict[str, Any], UUI
     return user_info, company_id
 
 
+async def require_company_member(
+    request: Request,
+) -> tuple[dict[str, Any], UUID, CompanyMembership]:
+    """Returns (user_info, company_id, membership) for any active-company member.
+
+    A thin wrapper over ``_resolve_company_membership`` that exposes the resolved
+    membership to read-path routers so they can derive ``is_company_admin`` without
+    a second DB hit. Unlike ``require_company_admin`` it does not require the ADMIN
+    role — the caller decides what authority the role confers.
+    """
+    return await _resolve_company_membership(request)
+
+
+def is_company_admin(membership: CompanyMembership) -> bool:
+    """True if the membership confers company-admin authority in the active company."""
+    return membership.role == CompanyRole.ADMIN
+
+
 async def require_company_admin(
     request: Request,
 ) -> tuple[dict[str, Any], UUID, CompanyMembership]:

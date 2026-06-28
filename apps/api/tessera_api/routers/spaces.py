@@ -22,6 +22,14 @@ from tessera_core.domain.entities import (
 router = APIRouter(tags=["spaces"])
 
 
+def _not_found() -> HTTPException:
+    """Generic 404 for cross-company by-ID access — indistinguishable from absent (FR-004)."""
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"error": {"code": "not_found", "message": "Not found"}},
+    )
+
+
 class CreateSpaceRequest(BaseModel):
     slug: str
     name: str
@@ -84,24 +92,18 @@ async def get_space(space_id: UUID, request: Request) -> dict:
                 entity_id=space_id,
                 metadata={"company_id": str(company_id)},
             )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": "forbidden", "message": "Access denied"}},
-        )
+        raise _not_found()
 
     return {"space": space.model_dump()}
 
 
 async def validate_space_for_company(space_id: UUID, company_id: UUID) -> None:
-    """Raise 403 if space_id does not belong to company_id."""
+    """Raise 404 if space_id does not belong to company_id (indistinguishable from absent)."""
     async with get_db() as session:
         repo = SqlSpaceRepository(session)
         space = await repo.get_by_id_for_company(space_id, company_id)
     if space is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": "forbidden", "message": "Access denied"}},
-        )
+        raise _not_found()
 
 
 @router.post("/spaces/{space_id}/permissions", status_code=status.HTTP_201_CREATED)
@@ -126,10 +128,7 @@ async def create_permission(
                 entity_id=space_id,
                 metadata={"company_id": str(company_id)},
             )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": "forbidden", "message": "Access denied"}},
-        )
+        raise _not_found()
 
     permission = RolePermission(
         space_id=space_id,

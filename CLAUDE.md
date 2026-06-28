@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/035-fix-tenant-scope-gaps/plan.md
+at specs/036-company-scoped-admin/plan.md
 <!-- SPECKIT END -->

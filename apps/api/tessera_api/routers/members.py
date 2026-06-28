@@ -16,7 +16,10 @@ from tessera_api.adapters.repo import (
     SqlSpaceRepository,
     SqlUserRepository,
 )
-from tessera_api.auth.oidc import require_company_context
+from tessera_api.auth.oidc import (
+    is_company_admin,
+    require_company_member,
+)
 from tessera_api.routers.spaces import validate_space_for_company
 from tessera_core.domain.entities import SpaceRole
 from tessera_core.permissions.access import can_read_space_document
@@ -25,12 +28,20 @@ from tessera_core.services.membership import MembershipService
 router = APIRouter(tags=["members"])
 
 
-async def _require_space_in_company(space_id: UUID, company_id: UUID, actor_id: UUID) -> None:
-    """Verify space belongs to the active company; on miss audit + raise generic 403.
+def _not_found() -> HTTPException:
+    """Generic 404 for cross-company by-ID access — indistinguishable from absent (FR-004)."""
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"error": {"code": "not_found", "message": "Not found"}},
+    )
 
-    Mirrors the read-path ``validate_space_for_company`` but additionally records a
-    ``cross_tenant_denied`` audit entry, so member/permission writes are
-    indistinguishable from a missing space (FR-007 / FR-010).
+
+async def _require_space_in_company(space_id: UUID, company_id: UUID, actor_id: UUID) -> None:
+    """Verify space belongs to the active company; on miss audit + raise generic 404.
+
+    Records a single ``cross_tenant_denied`` audit entry and returns a not-found
+    response byte-identical to a genuinely-missing space, so a member/permission
+    write against another company's space discloses no existence (FR-004 / FR-008).
     """
     async with get_db() as session:
         space_repo = SqlSpaceRepository(session)
@@ -47,10 +58,7 @@ async def _require_space_in_company(space_id: UUID, company_id: UUID, actor_id: 
                 entity_id=space_id,
                 metadata={"company_id": str(company_id)},
             )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": "forbidden", "message": "Access denied"}},
-        )
+        raise _not_found()
 
 
 class InviteMemberRequest(BaseModel):
@@ -64,7 +72,8 @@ class ChangeRoleRequest(BaseModel):
 
 @router.post("/spaces/{space_id}/members", status_code=status.HTTP_201_CREATED)
 async def invite_member(space_id: UUID, body: InviteMemberRequest, request: Request) -> dict:
-    user_info, company_id = await require_company_context(request)
+    user_info, company_id, caller_membership = await require_company_member(request)
+    company_admin = is_company_admin(caller_membership)
     actor_id = UUID(user_info.get("id") or user_info.get("sub"))
     await _require_space_in_company(space_id, company_id, actor_id)
 
@@ -79,7 +88,9 @@ async def invite_member(space_id: UUID, body: InviteMemberRequest, request: Requ
         svc = MembershipService(repo=membership_repo, audit=audit_repo)
 
         try:
-            membership = await svc.invite(actor, space_id, body.user_id, body.role)
+            membership = await svc.invite(
+                actor, space_id, body.user_id, body.role, is_company_admin=company_admin
+            )
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except ValueError as e:
@@ -93,7 +104,8 @@ async def invite_member(space_id: UUID, body: InviteMemberRequest, request: Requ
 
 @router.get("/spaces/{space_id}/members")
 async def list_members(space_id: UUID, request: Request) -> dict:
-    user_info, company_id = await require_company_context(request)
+    user_info, company_id, caller_membership = await require_company_member(request)
+    company_admin = is_company_admin(caller_membership)
 
     await validate_space_for_company(space_id, company_id)
 
@@ -108,7 +120,9 @@ async def list_members(space_id: UUID, request: Request) -> dict:
         membership_repo = SqlSpaceMembershipRepository(session)
         memberships = await membership_repo.list_by_space(space_id)
 
-        if not can_read_space_document(actor, space_id, memberships):
+        if not can_read_space_document(
+            actor, space_id, memberships, is_company_admin=company_admin
+        ):
             raise HTTPException(status_code=403, detail="Not a member of this space")
 
     return {"members": [m.model_dump() for m in memberships]}
@@ -116,7 +130,7 @@ async def list_members(space_id: UUID, request: Request) -> dict:
 
 @router.get("/spaces/{space_id}/members/me")
 async def get_my_membership(space_id: UUID, request: Request) -> dict:
-    user_info, company_id = await require_company_context(request)
+    user_info, company_id, _caller_membership = await require_company_member(request)
     actor_id = UUID(user_info.get("id") or user_info.get("sub"))
     await _require_space_in_company(space_id, company_id, actor_id)
 
@@ -139,7 +153,8 @@ async def get_my_membership(space_id: UUID, request: Request) -> dict:
 async def change_member_role(
     space_id: UUID, user_id: UUID, body: ChangeRoleRequest, request: Request
 ) -> dict:
-    user_info, company_id = await require_company_context(request)
+    user_info, company_id, caller_membership = await require_company_member(request)
+    company_admin = is_company_admin(caller_membership)
     actor_id = UUID(user_info.get("id") or user_info.get("sub"))
     await _require_space_in_company(space_id, company_id, actor_id)
 
@@ -154,7 +169,9 @@ async def change_member_role(
         svc = MembershipService(repo=membership_repo, audit=audit_repo)
 
         try:
-            membership = await svc.change_role(actor, space_id, user_id, body.role)
+            membership = await svc.change_role(
+                actor, space_id, user_id, body.role, is_company_admin=company_admin
+            )
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except ValueError as e:
@@ -168,7 +185,8 @@ async def change_member_role(
 
 @router.delete("/spaces/{space_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_member(space_id: UUID, user_id: UUID, request: Request) -> Response:
-    user_info, company_id = await require_company_context(request)
+    user_info, company_id, caller_membership = await require_company_member(request)
+    company_admin = is_company_admin(caller_membership)
     actor_id = UUID(user_info.get("id") or user_info.get("sub"))
     await _require_space_in_company(space_id, company_id, actor_id)
 
@@ -183,7 +201,7 @@ async def remove_member(space_id: UUID, user_id: UUID, request: Request) -> Resp
         svc = MembershipService(repo=membership_repo, audit=audit_repo)
 
         try:
-            await svc.remove(actor, space_id, user_id)
+            await svc.remove(actor, space_id, user_id, is_company_admin=company_admin)
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except ValueError as e:

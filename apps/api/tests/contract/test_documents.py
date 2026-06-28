@@ -65,6 +65,21 @@ def _make_mocks(doc_id: uuid.UUID, version_id: uuid.UUID, space_id: uuid.UUID):
     return mock_doc_repo, mock_ver_repo, mock_doc_updated, mock_version, mock_get_db
 
 
+def _company_membership(user_id, role=None):
+    import uuid as _uuid
+    from datetime import UTC, datetime
+
+    from tessera_core.domain.entities import CompanyMembership, CompanyRole
+
+    return CompanyMembership(
+        id=_uuid.uuid4(),
+        user_id=user_id,
+        company_id=_uuid.uuid4(),
+        role=role or CompanyRole.MEMBER,
+        joined_at=datetime.now(UTC),
+    )
+
+
 class TestCreateDocumentContract:
     """Invariant: create_document MUST call set_current_version and return updated document."""
 
@@ -103,8 +118,14 @@ class TestCreateDocumentContract:
             patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
             patch("tessera_api.routers.documents.SqlUserRepository", return_value=mock_user_repo),
             patch(
-                "tessera_api.routers.documents.require_company_context",
-                new=AsyncMock(return_value=({"id": str(user_id), "sub": str(user_id)}, uuid.uuid4())),
+                "tessera_api.routers.documents.require_company_member",
+                new=AsyncMock(
+                    return_value=(
+                        {"id": str(user_id), "sub": str(user_id)},
+                        uuid.uuid4(),
+                        _company_membership(user_id),
+                    )
+                ),
             ),
         ):
             await create_document(_make_body(space_id), MagicMock())
@@ -144,8 +165,14 @@ class TestCreateDocumentContract:
             patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
             patch("tessera_api.routers.documents.SqlUserRepository", return_value=mock_user_repo),
             patch(
-                "tessera_api.routers.documents.require_company_context",
-                new=AsyncMock(return_value=({"id": str(user_id), "sub": str(user_id)}, uuid.uuid4())),
+                "tessera_api.routers.documents.require_company_member",
+                new=AsyncMock(
+                    return_value=(
+                        {"id": str(user_id), "sub": str(user_id)},
+                        uuid.uuid4(),
+                        _company_membership(user_id),
+                    )
+                ),
             ),
         ):
             result = await create_document(_make_body(space_id), MagicMock())
@@ -185,8 +212,14 @@ class TestCreateDocumentContract:
             patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
             patch("tessera_api.routers.documents.SqlUserRepository", return_value=mock_user_repo),
             patch(
-                "tessera_api.routers.documents.require_company_context",
-                new=AsyncMock(return_value=({"id": str(user_id), "sub": str(user_id)}, uuid.uuid4())),
+                "tessera_api.routers.documents.require_company_member",
+                new=AsyncMock(
+                    return_value=(
+                        {"id": str(user_id), "sub": str(user_id)},
+                        uuid.uuid4(),
+                        _company_membership(user_id),
+                    )
+                ),
             ),
         ):
             await create_document(_make_body(space_id), MagicMock())
@@ -280,8 +313,14 @@ class TestCreateDocumentOwnerContract:
             patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
             patch("tessera_api.routers.documents.SqlUserRepository", return_value=mock_user_repo),
             patch(
-                "tessera_api.routers.documents.require_company_context",
-                new=AsyncMock(return_value=({"id": str(user_id), "sub": str(user_id)}, uuid.uuid4())),
+                "tessera_api.routers.documents.require_company_member",
+                new=AsyncMock(
+                    return_value=(
+                        {"id": str(user_id), "sub": str(user_id)},
+                        uuid.uuid4(),
+                        _company_membership(user_id),
+                    )
+                ),
             ),
         ):
             await create_document(_make_body(space_id), MagicMock())

@@ -65,10 +65,16 @@ class TestGetSpaceMembershipRole:
 
 
 class TestEffectiveSpaceRole:
-    def test_global_admin_returns_admin_regardless_of_membership(self):
+    def test_company_admin_returns_admin_regardless_of_membership(self):
+        space_id = uuid.uuid4()
+        user = _user()
+        assert effective_space_role(user, space_id, [], is_company_admin=True) == SpaceRole.ADMIN
+
+    def test_global_is_admin_does_not_grant_space_admin(self):
+        """The legacy global flag confers no space authority (fail-closed default)."""
         space_id = uuid.uuid4()
         user = _user(is_admin=True)
-        assert effective_space_role(user, space_id, []) == SpaceRole.ADMIN
+        assert effective_space_role(user, space_id, []) is None
 
     def test_non_admin_returns_direct_membership_role(self):
         space_id = uuid.uuid4()
@@ -111,10 +117,15 @@ class TestCanWriteDocument:
         user = _user()
         assert can_write_document(user, space_id, []) is False
 
-    def test_global_admin_can_write(self):
+    def test_company_admin_can_write(self):
+        space_id = uuid.uuid4()
+        user = _user()
+        assert can_write_document(user, space_id, [], is_company_admin=True) is True
+
+    def test_global_is_admin_does_not_grant_write(self):
         space_id = uuid.uuid4()
         user = _user(is_admin=True)
-        assert can_write_document(user, space_id, []) is True
+        assert can_write_document(user, space_id, []) is False
 
 
 # ---------------------------------------------------------------------------
@@ -141,10 +152,15 @@ class TestCanManageMembers:
         memberships = [_membership(space_id, user.id, SpaceRole.VIEWER)]
         assert can_manage_members(user, space_id, memberships) is False
 
-    def test_global_admin_can_manage(self):
+    def test_company_admin_can_manage(self):
+        space_id = uuid.uuid4()
+        user = _user()
+        assert can_manage_members(user, space_id, [], is_company_admin=True) is True
+
+    def test_global_is_admin_does_not_grant_manage(self):
         space_id = uuid.uuid4()
         user = _user(is_admin=True)
-        assert can_manage_members(user, space_id, []) is True
+        assert can_manage_members(user, space_id, []) is False
 
 
 # ---------------------------------------------------------------------------
@@ -165,10 +181,15 @@ class TestCanReadSpaceDocument:
         user = _user()
         assert can_read_space_document(user, space_id, []) is False
 
-    def test_global_admin_can_read(self):
+    def test_company_admin_can_read(self):
+        space_id = uuid.uuid4()
+        user = _user()
+        assert can_read_space_document(user, space_id, [], is_company_admin=True) is True
+
+    def test_global_is_admin_does_not_grant_read(self):
         space_id = uuid.uuid4()
         user = _user(is_admin=True)
-        assert can_read_space_document(user, space_id, []) is True
+        assert can_read_space_document(user, space_id, []) is False
 
 
 # ---------------------------------------------------------------------------
@@ -236,10 +257,10 @@ class TestMembershipServiceInvite:
             await svc.invite(actor, space_id, target_user_id, SpaceRole.EDITOR)
 
     @pytest.mark.asyncio
-    async def test_global_admin_can_invite_without_membership(self):
+    async def test_company_admin_can_invite_without_membership(self):
         svc, repo, audit = _make_service()
         space_id = uuid.uuid4()
-        actor = _user(is_admin=True)
+        actor = _user()
         target_user_id = uuid.uuid4()
         expected = SpaceMembership(
             space_id=space_id, user_id=target_user_id, role=SpaceRole.VIEWER
@@ -249,8 +270,47 @@ class TestMembershipServiceInvite:
         repo.get.return_value = None
         repo.add.return_value = expected
 
-        result = await svc.invite(actor, space_id, target_user_id, SpaceRole.VIEWER)
+        result = await svc.invite(
+            actor, space_id, target_user_id, SpaceRole.VIEWER, is_company_admin=True
+        )
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_global_is_admin_cannot_invite_without_membership(self):
+        """The legacy global flag confers no member-management authority."""
+        svc, repo, _ = _make_service()
+        space_id = uuid.uuid4()
+        actor = _user(is_admin=True)
+
+        repo.list_by_space.return_value = []
+
+        with pytest.raises(PermissionError):
+            await svc.invite(actor, space_id, uuid.uuid4(), SpaceRole.VIEWER)
+
+    @pytest.mark.asyncio
+    async def test_company_admin_can_change_role_and_remove(self):
+        svc, repo, audit = _make_service()
+        space_id = uuid.uuid4()
+        actor = _user()
+        target_id = uuid.uuid4()
+        updated = SpaceMembership(space_id=space_id, user_id=target_id, role=SpaceRole.EDITOR)
+
+        repo.list_by_space.return_value = [
+            _membership(space_id, target_id, SpaceRole.VIEWER),
+        ]
+        repo.count_admins.return_value = 1
+        repo.update_role.return_value = updated
+
+        result = await svc.change_role(
+            actor, space_id, target_id, SpaceRole.EDITOR, is_company_admin=True
+        )
+        assert result.role == SpaceRole.EDITOR
+
+        repo.list_by_space.return_value = [
+            _membership(space_id, target_id, SpaceRole.EDITOR),
+        ]
+        await svc.remove(actor, space_id, target_id, is_company_admin=True)
+        repo.remove.assert_called_once_with(space_id, target_id)
 
 
 class TestMembershipServiceChangeRole:
