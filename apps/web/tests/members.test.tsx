@@ -96,47 +96,6 @@ describe("RoleBadge", () => {
 });
 
 // ---------------------------------------------------------------------------
-// InviteMemberForm
-// ---------------------------------------------------------------------------
-
-describe("InviteMemberForm", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("renders user_id input and role selector", async () => {
-    const onSuccess = vi.fn();
-    const { InviteMemberForm } = await import("@/components/members/InviteMemberForm");
-    render(<InviteMemberForm spaceId={SPACE_ID} onSuccess={onSuccess} />);
-
-    expect(screen.getByPlaceholderText(/user id/i)).toBeInTheDocument();
-    expect(screen.getByRole("combobox")).toBeInTheDocument();
-  });
-
-  it("calls POST /spaces/{id}/members on submit", async () => {
-    const onSuccess = vi.fn();
-    const newMembership = { id: "m3", space_id: SPACE_ID, user_id: "new-id", role: "editor" };
-    mockApi.post.mockResolvedValueOnce({ membership: newMembership });
-
-    const { InviteMemberForm } = await import("@/components/members/InviteMemberForm");
-    render(<InviteMemberForm spaceId={SPACE_ID} onSuccess={onSuccess} />);
-
-    fireEvent.change(screen.getByPlaceholderText(/user id/i), {
-      target: { value: "new-id" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /invite/i }));
-
-    await waitFor(() => {
-      expect(mockApi.post).toHaveBeenCalledWith(
-        `/v1/spaces/${SPACE_ID}/members`,
-        expect.objectContaining({ user_id: "new-id" })
-      );
-    });
-    await waitFor(() => expect(onSuccess).toHaveBeenCalled());
-  });
-});
-
-// ---------------------------------------------------------------------------
 // SpaceMembersPanel
 // ---------------------------------------------------------------------------
 
@@ -157,25 +116,25 @@ describe("SpaceMembersPanel", () => {
     });
   });
 
-  it("shows invite form when caller is ADMIN", async () => {
+  it("shows add member form when caller is ADMIN", async () => {
     mockApi.get.mockResolvedValue({ members: mockMembers });
 
     const { SpaceMembersPanel } = await import("@/components/members/SpaceMembersPanel");
     render(<SpaceMembersPanel spaceId={SPACE_ID} myRole="admin" />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText(/user id/i)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/search by name or email/i)).toBeInTheDocument();
     });
   });
 
-  it("hides invite form when caller is not ADMIN", async () => {
+  it("hides add member form when caller is not ADMIN", async () => {
     mockApi.get.mockResolvedValue({ members: mockMembers });
 
     const { SpaceMembersPanel } = await import("@/components/members/SpaceMembersPanel");
     render(<SpaceMembersPanel spaceId={SPACE_ID} myRole="viewer" />);
 
     await waitFor(() => {
-      expect(screen.queryByPlaceholderText(/user id/i)).not.toBeInTheDocument();
+      expect(screen.queryByPlaceholderText(/search by name or email/i)).not.toBeInTheDocument();
     });
   });
 

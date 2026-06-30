@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tessera_api.adapters.models.company import CompanyModel
 from tessera_api.adapters.models.company_membership import CompanyMembershipModel
+from tessera_api.adapters.models.space_membership import SpaceMembershipModel
+from tessera_api.adapters.models.user import UserModel
 from tessera_core.domain.company import Company
+from tessera_core.domain.company_member_match import CompanyMemberMatch
 from tessera_core.domain.company_membership import CompanyMembership
 from tessera_core.domain.company_role import CompanyRole
 from tessera_core.ports.repositories.company import CompanyRepository
@@ -86,3 +89,27 @@ class SqlCompanyRepository(CompanyRepository):
             select(CompanyMembershipModel).where(CompanyMembershipModel.user_id == user_id)
         )
         return [_company_membership_from_model(m) for m in result.scalars().all()]
+
+    async def search_members_for_space(
+        self, company_id: UUID, space_id: UUID, query: str, limit: int = 20
+    ) -> list[CompanyMemberMatch]:
+        pattern = f"%{query}%"
+        excluded = select(SpaceMembershipModel.user_id).where(
+            SpaceMembershipModel.space_id == space_id
+        )
+        stmt = (
+            select(UserModel)
+            .join(CompanyMembershipModel, CompanyMembershipModel.user_id == UserModel.id)
+            .where(
+                CompanyMembershipModel.company_id == company_id,
+                or_(UserModel.email.ilike(pattern), UserModel.display_name.ilike(pattern)),
+                UserModel.id.notin_(excluded),
+            )
+            .order_by(UserModel.display_name)
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return [
+            CompanyMemberMatch(user_id=u.id, display_name=u.display_name, email=u.email)
+            for u in result.scalars().all()
+        ]

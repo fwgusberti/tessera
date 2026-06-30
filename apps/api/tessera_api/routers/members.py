@@ -13,6 +13,7 @@ from tessera_api.adapters.audit import write_audit
 from tessera_api.adapters.database import SessionDep
 from tessera_api.adapters.repo import (
     SqlAuditRepository,
+    SqlCompanyRepository,
     SqlSpaceMembershipRepository,
     SqlSpaceRepository,
     SqlUserRepository,
@@ -23,7 +24,7 @@ from tessera_api.auth.oidc import (
 )
 from tessera_api.routers.spaces import validate_space_for_company
 from tessera_core.domain.entities import SpaceRole
-from tessera_core.permissions.access import can_read_space_document
+from tessera_core.permissions.access import can_manage_members, can_read_space_document
 from tessera_core.services.membership import MembershipService
 
 router = APIRouter(tags=["members"])
@@ -150,6 +151,42 @@ async def get_my_membership(
         raise HTTPException(status_code=404, detail="Not a member of this space")
 
     return {"membership": membership.model_dump()}
+
+
+@router.get("/spaces/{space_id}/members/search")
+async def search_members(
+    space_id: UUID, q: str, ctx: CompanyMemberContext, session: SessionDep
+) -> dict:
+    """Search company members eligible to be added to this space (FR-002, FR-003).
+
+    Authorized per target space (FR-002a): caller must be an admin of space_id
+    or a company admin — same rule as POST /spaces/{space_id}/members.
+    """
+    user_info, company_id, caller_membership = ctx
+    company_admin = is_company_admin(caller_membership)
+    actor_id = UUID(user_info.get("id") or user_info.get("sub"))
+    await _require_space_in_company(space_id, company_id, actor_id, session)
+
+    user_repo = SqlUserRepository(session)
+    actor = await user_repo.get_by_id(actor_id)
+    if actor is None:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    membership_repo = SqlSpaceMembershipRepository(session)
+    memberships = await membership_repo.list_by_space(space_id)
+
+    if not can_manage_members(actor, space_id, memberships, is_company_admin=company_admin):
+        raise HTTPException(status_code=403, detail="Only space admins can search members")
+
+    company_repo = SqlCompanyRepository(session)
+    matches = await company_repo.search_members_for_space(company_id, space_id, q)
+
+    return {
+        "members": [
+            {"user_id": str(m.user_id), "display_name": m.display_name, "email": m.email}
+            for m in matches
+        ]
+    }
 
 
 @router.put("/spaces/{space_id}/members/{user_id}")

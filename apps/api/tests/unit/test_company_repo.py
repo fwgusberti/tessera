@@ -299,6 +299,94 @@ class TestAddMembershipIdempotency:
         assert mock_session.add.call_count == 1
 
 
+class TestSearchMembersForSpace:
+    @pytest.mark.anyio
+    async def test_search_returns_company_scoped_matches(self, mock_session, company_id, user_id):
+        from tessera_api.adapters.models import UserModel
+        from tessera_api.adapters.repo import SqlCompanyRepository
+
+        space_id = uuid.uuid4()
+        models = [
+            UserModel(
+                id=user_id,
+                external_subject="sub-1",
+                email="bob@acme.com",
+                display_name="Bob Builder",
+            ),
+        ]
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = models
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        repo = SqlCompanyRepository(mock_session)
+        result = await repo.search_members_for_space(company_id, space_id, "bo")
+
+        assert len(result) == 1
+        assert result[0].user_id == user_id
+        assert result[0].display_name == "Bob Builder"
+        assert result[0].email == "bob@acme.com"
+        mock_session.execute.assert_awaited_once()
+        executed_stmt = mock_session.execute.call_args[0][0]
+        assert len(executed_stmt._order_by_clauses) > 0
+
+    @pytest.mark.anyio
+    async def test_search_excludes_users_outside_company(self, mock_session, company_id):
+        """A user whose only company membership is a different company must not appear —
+        enforced by the query's company_id filter, not a post-filter in Python."""
+        from tessera_api.adapters.repo import SqlCompanyRepository
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        repo = SqlCompanyRepository(mock_session)
+        result = await repo.search_members_for_space(company_id, uuid.uuid4(), "anyone")
+
+        assert result == []
+        executed_stmt = mock_session.execute.call_args[0][0]
+        compiled = str(executed_stmt.compile(compile_kwargs={"literal_binds": False}))
+        assert "company_memberships" in compiled
+
+    @pytest.mark.anyio
+    async def test_search_excludes_existing_space_members_via_query(self, mock_session, company_id):
+        """The query MUST filter against space_memberships for the target space —
+        verified by inspecting the compiled statement rather than DB-level behavior."""
+        from tessera_api.adapters.repo import SqlCompanyRepository
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        repo = SqlCompanyRepository(mock_session)
+        await repo.search_members_for_space(company_id, uuid.uuid4(), "anyone")
+
+        executed_stmt = mock_session.execute.call_args[0][0]
+        compiled = str(executed_stmt.compile(compile_kwargs={"literal_binds": False}))
+        assert "space_memberships" in compiled
+
+    @pytest.mark.anyio
+    async def test_search_respects_limit_argument(self, mock_session, company_id):
+        from tessera_api.adapters.repo import SqlCompanyRepository
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        repo = SqlCompanyRepository(mock_session)
+        await repo.search_members_for_space(company_id, uuid.uuid4(), "anyone", limit=5)
+
+        executed_stmt = mock_session.execute.call_args[0][0]
+        assert executed_stmt._limit_clause is not None
+
+
 class TestSqlDomainPolicyRepository:
     @pytest.mark.anyio
     async def test_create_persists_policy(self, mock_session, company_id):

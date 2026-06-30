@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { RoleBadge } from "./RoleBadge";
-import { InviteMemberForm } from "./InviteMemberForm";
+import { AddMemberForm } from "./AddMemberForm";
 
 type Role = "admin" | "editor" | "viewer";
 
@@ -125,7 +125,7 @@ export function SpaceMembersPanel({ spaceId, myRole }: SpaceMembersPanelProps) {
       </div>
 
       {isAdmin && (
-        <InviteMemberForm spaceId={spaceId} onSuccess={fetchMembers} />
+        <AddMemberForm spaceId={spaceId} onSuccess={fetchMembers} />
       )}
     </div>
   );

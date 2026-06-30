@@ -29,6 +29,12 @@ export interface SpaceAccess {
   is_direct: boolean;
 }
 
+export interface CompanyMemberMatch {
+  user_id: string;
+  display_name: string;
+  email: string;
+}
+
 export interface Document {
   id: string;
   space_id: string;
