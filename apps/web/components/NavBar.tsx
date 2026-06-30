@@ -66,6 +66,14 @@ export function NavBar() {
           >
             Documents
           </a>
+          {status === "authenticated" && (
+            <a
+              href="/spaces"
+              className={`text-sm ${pathname?.startsWith("/spaces") ? "text-indigo-600 font-medium" : "text-slate-600"} hover:text-slate-900`}
+            >
+              Spaces
+            </a>
+          )}
           <a href="/search" className="text-sm text-slate-600 hover:text-slate-900">
             Search
           </a>
@@ -145,6 +153,15 @@ export function NavBar() {
               >
                 Documents
               </a>
+              {status === "authenticated" && (
+                <a
+                  href="/spaces"
+                  onClick={() => setIsMenuOpen(false)}
+                  className={`px-2 py-3 text-sm ${pathname?.startsWith("/spaces") ? "text-indigo-600 font-medium" : "text-slate-600"} hover:text-slate-900 hover:bg-slate-50`}
+                >
+                  Spaces
+                </a>
+              )}
               <a
                 href="/search"
                 onClick={() => setIsMenuOpen(false)}

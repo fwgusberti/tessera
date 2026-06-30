@@ -1,3 +1,17 @@
+export type SpaceRole = "admin" | "editor" | "viewer";
+
+export interface MySpaceMembership {
+  space_id: string;
+  user_id: string;
+  role: SpaceRole;
+  created_at: string;
+}
+
+export interface SpaceWithRole {
+  space: Space;
+  role: SpaceRole | null;
+}
+
 export interface Space {
   id: string;
   slug: string;

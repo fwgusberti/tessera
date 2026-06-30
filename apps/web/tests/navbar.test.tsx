@@ -250,3 +250,43 @@ describe("NavBar — CompanyMenu presence", () => {
     expect(acmeTexts.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+// ─── US3: Spaces NavBar link ───────────────────────────────────────────────────
+
+describe("NavBar — Spaces link (US3)", () => {
+  it("renders a Spaces link pointing to /spaces when authenticated", () => {
+    mockNavStatus = "authenticated";
+    render(<NavBar />);
+    const spacesLinks = screen.getAllByRole("link", { name: /^spaces$/i });
+    expect(spacesLinks.length).toBeGreaterThan(0);
+    expect(spacesLinks[0]).toHaveAttribute("href", "/spaces");
+  });
+
+  it("Spaces link has active styling when pathname starts with /spaces", () => {
+    mockNavStatus = "authenticated";
+    mockPathname = "/spaces";
+    const { container } = render(<NavBar />);
+    const desktopNav = container.querySelector(".hidden.md\\:flex");
+    const spacesLink = desktopNav!.querySelector('a[href="/spaces"]');
+    expect(spacesLink).toBeInTheDocument();
+    expect(spacesLink!.className).toContain("text-indigo-600");
+    expect(spacesLink!.className).toContain("font-medium");
+  });
+
+  it("Spaces link has inactive styling when pathname is not /spaces", () => {
+    mockNavStatus = "authenticated";
+    mockPathname = "/documents";
+    const { container } = render(<NavBar />);
+    const desktopNav = container.querySelector(".hidden.md\\:flex");
+    const spacesLink = desktopNav!.querySelector('a[href="/spaces"]');
+    expect(spacesLink).toBeInTheDocument();
+    expect(spacesLink!.className).toContain("text-slate-600");
+    expect(spacesLink!.className).not.toContain("text-indigo-600");
+  });
+
+  it("Spaces link is absent when unauthenticated", () => {
+    mockNavStatus = "unauthenticated";
+    render(<NavBar />);
+    expect(screen.queryByRole("link", { name: /^spaces$/i })).not.toBeInTheDocument();
+  });
+});
