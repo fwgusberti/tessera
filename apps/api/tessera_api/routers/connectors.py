@@ -12,13 +12,14 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from tessera_api.adapters.audit import write_audit
-from tessera_api.adapters.database import get_db
+from tessera_api.adapters.database import SessionDep
 from tessera_api.adapters.repo import SqlConnectorRepository, SqlSpaceRepository
-from tessera_api.auth.oidc import require_company_admin
+from tessera_api.auth.oidc import CompanyAdminContext
 from tessera_core.domain.entities import Connector
 
 try:
@@ -47,31 +48,36 @@ def _not_found() -> HTTPException:
 
 
 async def _audit_cross_tenant_denied(
-    actor_id: UUID, entity_type: str, entity_id: UUID, company_id: UUID
+    session: AsyncSession,
+    actor_id: UUID,
+    entity_type: str,
+    entity_id: UUID,
+    company_id: UUID,
 ) -> None:
-    async with get_db() as audit_session:
-        await write_audit(
-            audit_session,
-            actor_type="user",
-            actor_id=actor_id,
-            action="cross_tenant_denied",
-            entity_type=entity_type,
-            entity_id=entity_id,
-            metadata={"company_id": str(company_id)},
-        )
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=actor_id,
+        action="cross_tenant_denied",
+        entity_type=entity_type,
+        entity_id=entity_id,
+        metadata={"company_id": str(company_id)},
+    )
 
 
 @router.post("/spaces/{space_id}/connectors", status_code=status.HTTP_201_CREATED)
-async def create_connector(space_id: UUID, body: CreateConnectorRequest, request: Request) -> dict:
-    user_info, company_id, _membership = await require_company_admin(request)
+async def create_connector(
+    space_id: UUID, body: CreateConnectorRequest, ctx: CompanyAdminContext, session: SessionDep
+) -> dict:
+    user_info, company_id, _membership = ctx
     actor_id = UUID(user_info["sub"])
 
-    async with get_db() as session:
-        space_repo = SqlSpaceRepository(session)
-        space = await space_repo.get_by_id_for_company(space_id, company_id)
+    space_repo = SqlSpaceRepository(session)
+    space = await space_repo.get_by_id_for_company(space_id, company_id)
 
     if space is None:
-        await _audit_cross_tenant_denied(actor_id, "space", space_id, company_id)
+        await _audit_cross_tenant_denied(session, actor_id, "space", space_id, company_id)
+        await session.commit()
         raise _not_found()
 
     connector = Connector(
@@ -80,24 +86,25 @@ async def create_connector(space_id: UUID, body: CreateConnectorRequest, request
         config=body.config,
         schedule=body.schedule,
     )
-    async with get_db() as session:
-        repo = SqlConnectorRepository(session)
-        created = await repo.create(connector)
+    repo = SqlConnectorRepository(session)
+    created = await repo.create(connector)
     return {"connector": created.model_dump()}
 
 
 @router.post("/connectors/{connector_id}/sync", status_code=status.HTTP_202_ACCEPTED)
-async def sync_connector(connector_id: UUID, request: Request) -> dict:
-    user_info, company_id, _membership = await require_company_admin(request)
+async def sync_connector(
+    connector_id: UUID, ctx: CompanyAdminContext, session: SessionDep
+) -> dict:
+    user_info, company_id, _membership = ctx
     actor_id = UUID(user_info["sub"])
 
-    async with get_db() as session:
-        repo = SqlConnectorRepository(session)
-        connector = await repo.get_by_id_for_company(connector_id, company_id)
+    repo = SqlConnectorRepository(session)
+    connector = await repo.get_by_id_for_company(connector_id, company_id)
 
     if connector is None:
         # Deny and audit BEFORE enqueuing any work (FR-005).
-        await _audit_cross_tenant_denied(actor_id, "connector", connector_id, company_id)
+        await _audit_cross_tenant_denied(session, actor_id, "connector", connector_id, company_id)
+        await session.commit()
         raise _not_found()
 
     task = sync_connector_task.delay(str(connector_id))

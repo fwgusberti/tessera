@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -49,14 +49,6 @@ def _bypass_onboarding_guard():
         app.dependency_overrides.pop(require_onboarding_complete, None)
 
 
-def _mock_db():
-    mock_get_db = MagicMock()
-    mock_session = AsyncMock()
-    mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-    return mock_get_db
-
-
 def _cross_tenant_denied_count(mock_audit) -> int:
     calls = mock_audit.await_args_list or mock_audit.call_args_list
     return sum(1 for c in calls if c.kwargs.get("action") == "cross_tenant_denied")
@@ -81,10 +73,7 @@ class TestUS1OwnCompanyVisibility:
 
         results: dict[str, set[str]] = {}
         with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
-                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
-            ):
+            with patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls:
                 mock_repo = AsyncMock()
                 mock_repo.list_by_company = AsyncMock(
                     side_effect=lambda cid: s.spaces_by_company[cid]
@@ -116,10 +105,7 @@ class TestUS1OwnCompanyVisibility:
         from tessera_api.main import app
 
         with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
-                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
-            ):
+            with patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls:
                 mock_repo = AsyncMock()
                 mock_repo.list_by_company = AsyncMock(
                     side_effect=lambda cid: spaces_by_company.get(cid, [])
@@ -149,7 +135,6 @@ class TestUS1OwnCompanyVisibility:
         for probe_id in (b_space_id, random_id):
             with _bypass_onboarding_guard():
                 with (
-                    patch("tessera_api.routers.spaces.get_db", _mock_db()),
                     patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
                     patch(
                         "tessera_api.routers.spaces.write_audit", new_callable=AsyncMock
@@ -191,10 +176,7 @@ class TestUS2MembershipAndRole:
         from tessera_api.main import app
 
         with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
-                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
-            ):
+            with patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls:
                 mock_repo = AsyncMock()
                 mock_repo.list_by_company = AsyncMock(return_value=[b_space])
                 mock_repo_cls.return_value = mock_repo
@@ -217,10 +199,7 @@ class TestUS2MembershipAndRole:
         from tessera_core.domain.entities import Confidentiality, RolePermission, UserRole
 
         with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
-                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
-            ):
+            with patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls:
                 mock_repo = AsyncMock()
                 mock_repo.get_by_id_for_company = AsyncMock(return_value=a_space)
                 mock_repo.create_role_permission = AsyncMock(
@@ -256,10 +235,7 @@ class TestUS2MembershipAndRole:
         from tessera_api.main import app
 
         with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
-                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
-            ):
+            with patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls:
                 mock_repo = AsyncMock()
                 # Even if asked, the space exists for Company A — but role gating
                 # rejects before any visibility check is reached.
@@ -292,10 +268,7 @@ class TestUS3PlatformStatusNoVisibility:
         from tessera_api.main import app
 
         with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
-                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
-            ):
+            with patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls:
                 mock_repo = AsyncMock()
                 mock_repo.list_by_company = AsyncMock(
                     side_effect=lambda cid: s.spaces_by_company[cid]

@@ -1,7 +1,6 @@
 """Contract tests: POST /v1/documents and POST /v1/documents/{id}/publish owner invariants."""
 
 import uuid
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -58,11 +57,7 @@ def _make_mocks(doc_id: uuid.UUID, version_id: uuid.UUID, space_id: uuid.UUID):
     mock_ver_repo = AsyncMock()
     mock_ver_repo.create.return_value = mock_version
 
-    @asynccontextmanager
-    async def mock_get_db():
-        yield MagicMock()
-
-    return mock_doc_repo, mock_ver_repo, mock_doc_updated, mock_version, mock_get_db
+    return mock_doc_repo, mock_ver_repo, mock_doc_updated, mock_version
 
 
 def _company_membership(user_id, role=None):
@@ -91,44 +86,30 @@ class TestCreateDocumentContract:
         space_id = uuid.uuid4()
         doc_id = uuid.uuid4()
         version_id = uuid.uuid4()
-        mock_doc_repo, mock_ver_repo, _, mock_version, mock_get_db = _make_mocks(
-            doc_id, version_id, space_id
-        )
+        user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        mock_session = AsyncMock()
+
+        mock_doc_repo, mock_ver_repo, _, _ = _make_mocks(doc_id, version_id, space_id)
 
         mock_space_repo = AsyncMock()
         mock_space_repo.get_by_id_for_company = AsyncMock(
             return_value=type("Space", (), {"id": space_id})()
         )
-        user_id = uuid.uuid4()
 
         mock_user_repo = AsyncMock()
         mock_user_repo.get_by_id = AsyncMock(return_value=None)
         mock_user_repo.get_by_subject = AsyncMock(return_value=None)
 
+        ctx = ({"id": str(user_id), "sub": str(user_id)}, company_id, _company_membership(user_id))
+
         with (
-            patch("tessera_api.routers.documents.get_db", mock_get_db),
-            patch(
-                "tessera_api.routers.documents.SqlDocumentRepository",
-                return_value=mock_doc_repo,
-            ),
-            patch(
-                "tessera_api.routers.documents.SqlDocumentVersionRepository",
-                return_value=mock_ver_repo,
-            ),
+            patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
+            patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
             patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
             patch("tessera_api.routers.documents.SqlUserRepository", return_value=mock_user_repo),
-            patch(
-                "tessera_api.routers.documents.require_company_member",
-                new=AsyncMock(
-                    return_value=(
-                        {"id": str(user_id), "sub": str(user_id)},
-                        uuid.uuid4(),
-                        _company_membership(user_id),
-                    )
-                ),
-            ),
         ):
-            await create_document(_make_body(space_id), MagicMock())
+            await create_document(_make_body(space_id), ctx, mock_session)
 
         mock_doc_repo.set_current_version.assert_called_once_with(doc_id, version_id)
 
@@ -141,7 +122,10 @@ class TestCreateDocumentContract:
         doc_id = uuid.uuid4()
         version_id = uuid.uuid4()
         user_id = uuid.uuid4()
-        mock_doc_repo, mock_ver_repo, _, _, mock_get_db = _make_mocks(doc_id, version_id, space_id)
+        company_id = uuid.uuid4()
+        mock_session = AsyncMock()
+
+        mock_doc_repo, mock_ver_repo, _, _ = _make_mocks(doc_id, version_id, space_id)
 
         mock_space_repo = AsyncMock()
         mock_space_repo.get_by_id_for_company = AsyncMock(
@@ -152,30 +136,15 @@ class TestCreateDocumentContract:
         mock_user_repo.get_by_id = AsyncMock(return_value=None)
         mock_user_repo.get_by_subject = AsyncMock(return_value=None)
 
+        ctx = ({"id": str(user_id), "sub": str(user_id)}, company_id, _company_membership(user_id))
+
         with (
-            patch("tessera_api.routers.documents.get_db", mock_get_db),
-            patch(
-                "tessera_api.routers.documents.SqlDocumentRepository",
-                return_value=mock_doc_repo,
-            ),
-            patch(
-                "tessera_api.routers.documents.SqlDocumentVersionRepository",
-                return_value=mock_ver_repo,
-            ),
+            patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
+            patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
             patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
             patch("tessera_api.routers.documents.SqlUserRepository", return_value=mock_user_repo),
-            patch(
-                "tessera_api.routers.documents.require_company_member",
-                new=AsyncMock(
-                    return_value=(
-                        {"id": str(user_id), "sub": str(user_id)},
-                        uuid.uuid4(),
-                        _company_membership(user_id),
-                    )
-                ),
-            ),
         ):
-            result = await create_document(_make_body(space_id), MagicMock())
+            result = await create_document(_make_body(space_id), ctx, mock_session)
 
         assert result["document"]["current_version_id"] == version_id
 
@@ -188,7 +157,10 @@ class TestCreateDocumentContract:
         doc_id = uuid.uuid4()
         version_id = uuid.uuid4()
         user_id = uuid.uuid4()
-        mock_doc_repo, mock_ver_repo, _, _, mock_get_db = _make_mocks(doc_id, version_id, space_id)
+        company_id = uuid.uuid4()
+        mock_session = AsyncMock()
+
+        mock_doc_repo, mock_ver_repo, _, _ = _make_mocks(doc_id, version_id, space_id)
 
         mock_space_repo = AsyncMock()
         mock_space_repo.get_by_id_for_company = AsyncMock(
@@ -199,30 +171,15 @@ class TestCreateDocumentContract:
         mock_user_repo.get_by_id = AsyncMock(return_value=None)
         mock_user_repo.get_by_subject = AsyncMock(return_value=None)
 
+        ctx = ({"id": str(user_id), "sub": str(user_id)}, company_id, _company_membership(user_id))
+
         with (
-            patch("tessera_api.routers.documents.get_db", mock_get_db),
-            patch(
-                "tessera_api.routers.documents.SqlDocumentRepository",
-                return_value=mock_doc_repo,
-            ),
-            patch(
-                "tessera_api.routers.documents.SqlDocumentVersionRepository",
-                return_value=mock_ver_repo,
-            ),
+            patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
+            patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
             patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
             patch("tessera_api.routers.documents.SqlUserRepository", return_value=mock_user_repo),
-            patch(
-                "tessera_api.routers.documents.require_company_member",
-                new=AsyncMock(
-                    return_value=(
-                        {"id": str(user_id), "sub": str(user_id)},
-                        uuid.uuid4(),
-                        _company_membership(user_id),
-                    )
-                ),
-            ),
         ):
-            await create_document(_make_body(space_id), MagicMock())
+            await create_document(_make_body(space_id), ctx, mock_session)
 
         created_version_arg = mock_ver_repo.create.call_args[0][0]
         assert created_version_arg.version_number == 1
@@ -273,11 +230,7 @@ def _make_publish_mocks(
     mock_ver_repo.list_by_document.return_value = [mock_version]
     mock_ver_repo.create.return_value = mock_version
 
-    @asynccontextmanager
-    async def mock_get_db():
-        yield MagicMock()
-
-    return mock_doc_repo, mock_ver_repo, mock_doc, mock_version, mock_get_db
+    return mock_doc_repo, mock_ver_repo, mock_doc, mock_version
 
 
 class TestCreateDocumentOwnerContract:
@@ -292,8 +245,10 @@ class TestCreateDocumentOwnerContract:
         doc_id = uuid.uuid4()
         version_id = uuid.uuid4()
         user_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        mock_session = AsyncMock()
 
-        mock_doc_repo, mock_ver_repo, _, _, mock_get_db = _make_mocks(doc_id, version_id, space_id)
+        mock_doc_repo, mock_ver_repo, _, _ = _make_mocks(doc_id, version_id, space_id)
 
         mock_space_repo = AsyncMock()
         mock_space_repo.get_by_id_for_company = AsyncMock(
@@ -304,26 +259,15 @@ class TestCreateDocumentOwnerContract:
         mock_user_repo.get_by_id = AsyncMock(return_value=None)
         mock_user_repo.get_by_subject = AsyncMock(return_value=None)
 
+        ctx = ({"id": str(user_id), "sub": str(user_id)}, company_id, _company_membership(user_id))
+
         with (
-            patch("tessera_api.routers.documents.get_db", mock_get_db),
             patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
-            patch(
-                "tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo
-            ),
+            patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
             patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
             patch("tessera_api.routers.documents.SqlUserRepository", return_value=mock_user_repo),
-            patch(
-                "tessera_api.routers.documents.require_company_member",
-                new=AsyncMock(
-                    return_value=(
-                        {"id": str(user_id), "sub": str(user_id)},
-                        uuid.uuid4(),
-                        _company_membership(user_id),
-                    )
-                ),
-            ),
         ):
-            await create_document(_make_body(space_id), MagicMock())
+            await create_document(_make_body(space_id), ctx, mock_session)
 
         created_doc_arg = mock_doc_repo.create.call_args[0][0]
         assert created_doc_arg.owner_user_id == user_id
@@ -341,24 +285,21 @@ class TestPublishDocumentOwnerContract:
         version_id = uuid.uuid4()
         space_id = uuid.uuid4()
         publisher_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        mock_session = AsyncMock()
 
-        mock_doc_repo, mock_ver_repo, _, mock_version, mock_get_db = _make_publish_mocks(
+        mock_doc_repo, mock_ver_repo, _, mock_version = _make_publish_mocks(
             doc_id, version_id, space_id, owner_id=None
         )
 
+        ctx = ({"id": str(publisher_id), "sub": str(publisher_id)}, company_id)
+
         with (
-            patch("tessera_api.routers.documents.get_db", mock_get_db),
             patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
-            patch(
-                "tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo
-            ),
+            patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
             patch("tessera_api.routers.documents.write_audit", new=AsyncMock()),
-            patch(
-                "tessera_api.routers.documents.require_company_context",
-                new=AsyncMock(return_value=({"id": str(publisher_id), "sub": str(publisher_id)}, uuid.uuid4())),
-            ),
         ):
-            result = await publish_document(doc_id, MagicMock())
+            result = await publish_document(doc_id, ctx, mock_session)
 
         mock_doc_repo.set_owner.assert_called_once_with(doc_id, publisher_id)
         assert result["document"]["state"] == DocumentLifecycleState.PUBLISHED
@@ -378,24 +319,21 @@ class TestPublishDocumentOwnerContract:
         space_id = uuid.uuid4()
         existing_owner_id = uuid.uuid4()
         publisher_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        mock_session = AsyncMock()
 
-        mock_doc_repo, mock_ver_repo, _, _, mock_get_db = _make_publish_mocks(
+        mock_doc_repo, mock_ver_repo, _, _ = _make_publish_mocks(
             doc_id, version_id, space_id, owner_id=existing_owner_id
         )
 
+        ctx = ({"id": str(publisher_id), "sub": str(publisher_id)}, company_id)
+
         with (
-            patch("tessera_api.routers.documents.get_db", mock_get_db),
             patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
-            patch(
-                "tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo
-            ),
+            patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
             patch("tessera_api.routers.documents.write_audit", new=AsyncMock()),
-            patch(
-                "tessera_api.routers.documents.require_company_context",
-                new=AsyncMock(return_value=({"id": str(publisher_id), "sub": str(publisher_id)}, uuid.uuid4())),
-            ),
         ):
-            result = await publish_document(doc_id, MagicMock())
+            result = await publish_document(doc_id, ctx, mock_session)
 
         mock_doc_repo.set_owner.assert_not_called()
         assert result["document"]["state"] == DocumentLifecycleState.PUBLISHED
@@ -414,24 +352,21 @@ class TestPublishDocumentVersionContract:
         space_id = uuid.uuid4()
         publisher_id = uuid.uuid4()
         owner_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        mock_session = AsyncMock()
 
-        mock_doc_repo, mock_ver_repo, _, _, mock_get_db = _make_publish_mocks(
+        mock_doc_repo, mock_ver_repo, _, _ = _make_publish_mocks(
             doc_id, version_id, space_id, owner_id=owner_id
         )
 
+        ctx = ({"id": str(publisher_id), "sub": str(publisher_id)}, company_id)
+
         with (
-            patch("tessera_api.routers.documents.get_db", mock_get_db),
             patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
-            patch(
-                "tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo
-            ),
+            patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
             patch("tessera_api.routers.documents.write_audit", new=AsyncMock()),
-            patch(
-                "tessera_api.routers.documents.require_company_context",
-                new=AsyncMock(return_value=({"id": str(publisher_id), "sub": str(publisher_id)}, uuid.uuid4())),
-            ),
         ):
-            result = await publish_document(doc_id, MagicMock())
+            result = await publish_document(doc_id, ctx, mock_session)
 
         mock_ver_repo.create.assert_not_called()
         mock_ver_repo.update_approval.assert_called_once()
@@ -454,26 +389,23 @@ class TestPublishDocumentErrorContract:
         space_id = uuid.uuid4()
         owner_id = uuid.uuid4()
         publisher_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        mock_session = AsyncMock()
 
-        mock_doc_repo, mock_ver_repo, _, _, mock_get_db = _make_publish_mocks(
+        mock_doc_repo, mock_ver_repo, _, _ = _make_publish_mocks(
             doc_id, version_id, space_id, owner_id=owner_id
         )
         mock_ver_repo.list_by_document.return_value = []
 
+        ctx = ({"id": str(publisher_id), "sub": str(publisher_id)}, company_id)
+
         with (
-            patch("tessera_api.routers.documents.get_db", mock_get_db),
             patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
-            patch(
-                "tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo
-            ),
+            patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
             patch("tessera_api.routers.documents.write_audit", new=AsyncMock()),
-            patch(
-                "tessera_api.routers.documents.require_company_context",
-                new=AsyncMock(return_value=({"id": str(publisher_id), "sub": str(publisher_id)}, uuid.uuid4())),
-            ),
             pytest.raises(HTTPException) as exc_info,
         ):
-            await publish_document(doc_id, MagicMock())
+            await publish_document(doc_id, ctx, mock_session)
 
         assert exc_info.value.status_code == 400
         assert "versions" in exc_info.value.detail.lower()
@@ -491,6 +423,7 @@ class TestListDocumentsNoSpaceIdContract:
         space_id = uuid.uuid4()
         doc_id = uuid.uuid4()
         user_id = uuid.uuid4()
+        mock_session = AsyncMock()
 
         mock_doc = Document(
             id=doc_id,
@@ -508,20 +441,13 @@ class TestListDocumentsNoSpaceIdContract:
         mock_space_repo = AsyncMock()
         mock_space_repo.list_by_company = AsyncMock(return_value=[mock_space])
 
-        @asynccontextmanager
-        async def mock_get_db():
-            yield MagicMock()
+        ctx = ({"sub": str(user_id), "id": str(user_id)}, company_id)
 
         with (
-            patch("tessera_api.routers.documents.get_db", mock_get_db),
             patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
             patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
-            patch(
-                "tessera_api.routers.documents.require_company_context",
-                new=AsyncMock(return_value=({"sub": str(user_id), "id": str(user_id)}, company_id)),
-            ),
         ):
-            result = await list_documents(space_id=None, state=None, request=MagicMock())
+            result = await list_documents(ctx=ctx, session=mock_session, space_id=None, state=None)
 
         assert len(result["documents"]) == 1
         assert result["documents"][0]["id"] == doc_id
@@ -534,6 +460,7 @@ class TestListDocumentsNoSpaceIdContract:
 
         company_id = uuid.uuid4()
         user_id = uuid.uuid4()
+        mock_session = AsyncMock()
 
         mock_doc_repo = AsyncMock()
         mock_doc_repo.list_by_space_ids_for_company = AsyncMock(return_value=[])
@@ -541,19 +468,12 @@ class TestListDocumentsNoSpaceIdContract:
         mock_space_repo = AsyncMock()
         mock_space_repo.list_by_company = AsyncMock(return_value=[])
 
-        @asynccontextmanager
-        async def mock_get_db():
-            yield MagicMock()
+        ctx = ({"sub": str(user_id), "id": str(user_id)}, company_id)
 
         with (
-            patch("tessera_api.routers.documents.get_db", mock_get_db),
             patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
             patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
-            patch(
-                "tessera_api.routers.documents.require_company_context",
-                new=AsyncMock(return_value=({"sub": str(user_id), "id": str(user_id)}, company_id)),
-            ),
         ):
-            result = await list_documents(space_id=None, state=None, request=MagicMock())
+            result = await list_documents(ctx=ctx, session=mock_session, space_id=None, state=None)
 
         assert result["documents"] == []

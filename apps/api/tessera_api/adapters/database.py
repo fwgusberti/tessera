@@ -1,6 +1,6 @@
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Annotated, AsyncIterator
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from tessera_api.config import get_settings
@@ -24,7 +24,6 @@ def get_session_factory():
     return _session_factory
 
 
-@asynccontextmanager
 async def get_db() -> AsyncIterator[AsyncSession]:
     factory = get_session_factory()
     async with factory() as session:
@@ -34,3 +33,6 @@ async def get_db() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+SessionDep = Annotated[AsyncSession, Depends(get_db)]

@@ -4,67 +4,76 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 
-def _make_app():
+@contextmanager
+def _bypass_onboarding():
     from tessera_api.auth.bearer import require_onboarding_complete
-    from tessera_api.main import create_app
+    from tessera_api.main import app
 
-    app = create_app()
-
-    async def _noop_onboarding():
+    async def _noop():
         return None
 
-    app.dependency_overrides[require_onboarding_complete] = _noop_onboarding
-    return app
+    app.dependency_overrides[require_onboarding_complete] = _noop
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(require_onboarding_complete, None)
 
 
-def _user_info():
+@contextmanager
+def _with_company_context():
+    from tessera_api.auth.oidc import require_company_context
+    from tessera_api.main import app
+
     uid = str(uuid.uuid4())
-    return {"sub": uid, "id": uid, "email": "test@test.com", "is_admin": False}
-
-
-def _company_context_patch():
-    info = _user_info()
+    info = {"sub": uid, "id": uid, "email": "test@test.com", "is_admin": False}
     company_id = uuid.uuid4()
-    return patch(
-        "tessera_api.routers.search.require_company_context",
-        new=AsyncMock(return_value=(info, company_id)),
-    )
+
+    async def _fake():
+        return info, company_id
+
+    app.dependency_overrides[require_company_context] = _fake
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(require_company_context, None)
 
 
-def _empty_db_patches():
-    """Patch get_db + SqlSpaceRepository to return an empty space list."""
+@contextmanager
+def _with_db_and_empty_spaces():
+    from tessera_api.adapters.database import get_db
+    from tessera_api.main import app
+
     mock_session = AsyncMock()
     mock_space_repo = MagicMock()
     mock_space_repo.list_by_company = AsyncMock(return_value=[])
 
-    @asynccontextmanager
-    async def _fake_get_db():
+    async def _gen():
         yield mock_session
 
-    return (
-        patch("tessera_api.routers.search.get_db", _fake_get_db),
-        patch("tessera_api.routers.search.SqlSpaceRepository", return_value=mock_space_repo),
-    )
+    app.dependency_overrides[get_db] = _gen
+    try:
+        with patch("tessera_api.routers.search.SqlSpaceRepository", return_value=mock_space_repo):
+            yield
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 def test_search_returns_503_when_ollama_raises_http_status_error():
     """Ollama HTTPStatusError must produce 503, not 500."""
     from fastapi.testclient import TestClient
-
-    app = _make_app()
-    db1, db2 = _empty_db_patches()
+    from tessera_api.main import app
 
     with (
-        _company_context_patch(),
-        db1,
-        db2,
+        _bypass_onboarding(),
+        _with_company_context(),
+        _with_db_and_empty_spaces(),
         patch(
             "tessera_api.adapters.embeddings.OllamaEmbeddingProvider.embed",
             side_effect=httpx.HTTPStatusError(
@@ -83,14 +92,12 @@ def test_search_returns_503_when_ollama_raises_http_status_error():
 def test_search_returns_503_when_ollama_raises_connect_error():
     """Ollama ConnectError (service down) must produce 503, not 500."""
     from fastapi.testclient import TestClient
-
-    app = _make_app()
-    db1, db2 = _empty_db_patches()
+    from tessera_api.main import app
 
     with (
-        _company_context_patch(),
-        db1,
-        db2,
+        _bypass_onboarding(),
+        _with_company_context(),
+        _with_db_and_empty_spaces(),
         patch(
             "tessera_api.adapters.embeddings.OllamaEmbeddingProvider.embed",
             side_effect=httpx.ConnectError("Connection refused"),
@@ -105,14 +112,12 @@ def test_search_returns_503_when_ollama_raises_connect_error():
 def test_search_returns_200_with_empty_results_when_no_chunks_match():
     """When no chunks match the query, response is 200 with empty results list."""
     from fastapi.testclient import TestClient
-
-    app = _make_app()
-    db1, db2 = _empty_db_patches()
+    from tessera_api.main import app
 
     with (
-        _company_context_patch(),
-        db1,
-        db2,
+        _bypass_onboarding(),
+        _with_company_context(),
+        _with_db_and_empty_spaces(),
         patch(
             "tessera_api.adapters.embeddings.OllamaEmbeddingProvider.embed",
             new=AsyncMock(return_value=[[0.1] * 768]),

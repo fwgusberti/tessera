@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 
 @contextmanager
@@ -28,6 +28,27 @@ def _bypass_onboarding_guard():
         yield
     finally:
         app.dependency_overrides.pop(require_onboarding_complete, None)
+
+
+@contextmanager
+def _override_db_and_company_repo(mock_company_repo):
+    """Set up get_db dependency override and patch SqlCompanyRepository."""
+    from tessera_api.adapters.database import get_db
+    from tessera_api.main import app as _app
+
+    async def _fake_db():
+        yield AsyncMock()
+
+    prev = _app.dependency_overrides.get(get_db)
+    _app.dependency_overrides[get_db] = _fake_db
+    try:
+        with patch("tessera_api.auth.oidc.SqlCompanyRepository", return_value=mock_company_repo):
+            yield
+    finally:
+        if prev is not None:
+            _app.dependency_overrides[get_db] = prev
+        else:
+            _app.dependency_overrides.pop(get_db, None)
 
 
 def _full_token(
@@ -95,13 +116,7 @@ class TestSelectTokenBlockedFromDataEndpoints:
 class TestFullTokenCrossCompanyIsolation:
     """SC-002: full token for Company A gets 403 on Company B resources."""
 
-    def _make_patch_ctx(self, user_id: uuid.UUID, owned_company_id: uuid.UUID):
-        """Patch DB so membership exists only in owned_company_id."""
-        mock_db = MagicMock()
-        mock_session = AsyncMock()
-        mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
+    def _make_company_repo(self, user_id: uuid.UUID, owned_company_id: uuid.UUID):
         def _ms(uid, cid):
             if cid == owned_company_id:
                 return _membership(uid, cid)
@@ -110,11 +125,7 @@ class TestFullTokenCrossCompanyIsolation:
         mock_company_repo = AsyncMock()
         mock_company_repo.get_by_id = AsyncMock(return_value=None)
         mock_company_repo.get_membership = AsyncMock(side_effect=_ms)
-
-        return (
-            patch("tessera_api.auth.oidc.get_db", mock_db),
-            patch("tessera_api.auth.oidc.SqlCompanyRepository", return_value=mock_company_repo),
-        )
+        return mock_company_repo
 
     def test_full_token_company_a_blocked_from_company_b_spaces(self):
         """full token scoped to Company A → spaces endpoint only sees Company A's spaces."""
@@ -122,32 +133,29 @@ class TestFullTokenCrossCompanyIsolation:
         company_a_id = uuid.uuid4()
         token_a = _full_token(user_id=user_id, company_id=company_a_id)
 
-        p_db, p_repo = self._make_patch_ctx(user_id, company_a_id)
-        with _bypass_onboarding_guard(), p_db, p_repo:
-            with (
-                patch("tessera_api.routers.spaces.get_db") as mock_spaces_db,
-                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_space_repo_cls,
-            ):
-                mock_spaces_session = AsyncMock()
-                mock_spaces_db.return_value.__aenter__ = AsyncMock(return_value=mock_spaces_session)
-                mock_spaces_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_company_repo = self._make_company_repo(user_id, company_a_id)
 
-                mock_space_repo = AsyncMock()
-                mock_space_repo.list_by_company = AsyncMock(return_value=[])
-                mock_space_repo_cls.return_value = mock_space_repo
+        with (
+            _bypass_onboarding_guard(),
+            _override_db_and_company_repo(mock_company_repo),
+            patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_space_repo_cls,
+        ):
+            mock_space_repo = AsyncMock()
+            mock_space_repo.list_by_company = AsyncMock(return_value=[])
+            mock_space_repo_cls.return_value = mock_space_repo
 
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                with TestClient(app) as client:
-                    response = client.get(
-                        "/v1/spaces",
-                        headers={"Authorization": f"Bearer {token_a}"},
-                    )
+            with TestClient(app) as client:
+                response = client.get(
+                    "/v1/spaces",
+                    headers={"Authorization": f"Bearer {token_a}"},
+                )
 
-            assert response.status_code == 200
-            # Verify query was scoped to company_a_id — list_by_company called with it
-            mock_space_repo.list_by_company.assert_called_once_with(company_a_id)
+        assert response.status_code == 200
+        # Verify query was scoped to company_a_id — list_by_company called with it
+        mock_space_repo.list_by_company.assert_called_once_with(company_a_id)
 
 
 class TestRevokedMembershipBlocksExistingToken:
@@ -159,19 +167,13 @@ class TestRevokedMembershipBlocksExistingToken:
         company_id = uuid.uuid4()
         token = _full_token(user_id=user_id, company_id=company_id)
 
-        mock_db = MagicMock()
-        mock_session = AsyncMock()
-        mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
         mock_company_repo = AsyncMock()
         mock_company_repo.get_by_id = AsyncMock(return_value=None)
         mock_company_repo.get_membership = AsyncMock(return_value=None)  # membership revoked
 
         with (
             _bypass_onboarding_guard(),
-            patch("tessera_api.auth.oidc.get_db", mock_db),
-            patch("tessera_api.auth.oidc.SqlCompanyRepository", return_value=mock_company_repo),
+            _override_db_and_company_repo(mock_company_repo),
         ):
             from fastapi.testclient import TestClient
             from tessera_api.main import app
@@ -195,23 +197,32 @@ class TestAdminScopeConfinedToActiveTenant:
         from fastapi.testclient import TestClient
         from tessera_api.main import app
 
-        perm_body = {"idp_group": "test-group", "role": "member"}
+        perm_body = {"idp_group": "test-group", "role": "reader"}
         space_id = uuid.uuid4()
 
-        with TestClient(app) as client:
-            # Company A token: user is ADMIN of Company A → admin check passes
-            # Space doesn't exist → 404 (acceptable — admin authority check passed)
-            resp_a = client.post(
-                f"/v1/spaces/{space_id}/permissions",
-                json=perm_body,
-                headers={"Authorization": f"Bearer {token_a}"},
-            )
-            # Company B token: user is MEMBER of Company B (not admin) → 403
-            resp_b = client.post(
-                f"/v1/spaces/{space_id}/permissions",
-                json=perm_body,
-                headers={"Authorization": f"Bearer {token_b}"},
-            )
+        with (
+            _bypass_onboarding_guard(),
+            patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_sp_cls,
+            patch("tessera_api.routers.spaces.write_audit", new_callable=AsyncMock),
+        ):
+            mock_sp = AsyncMock()
+            mock_sp.get_by_id_for_company = AsyncMock(return_value=None)
+            mock_sp_cls.return_value = mock_sp
+
+            with TestClient(app) as client:
+                # Company A token: user is ADMIN of Company A → admin check passes
+                # Space doesn't exist → 404 (acceptable — admin authority check passed)
+                resp_a = client.post(
+                    f"/v1/spaces/{space_id}/permissions",
+                    json=perm_body,
+                    headers={"Authorization": f"Bearer {token_a}"},
+                )
+                # Company B token: user is MEMBER of Company B (not admin) → 403
+                resp_b = client.post(
+                    f"/v1/spaces/{space_id}/permissions",
+                    json=perm_body,
+                    headers={"Authorization": f"Bearer {token_b}"},
+                )
 
         # Company A token admin passes the gate → 404 because space doesn't exist
         assert resp_a.status_code in (403, 404)

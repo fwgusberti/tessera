@@ -7,6 +7,7 @@ from uuid import UUID
 
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from tessera_api.adapters.database import get_db
 from tessera_api.adapters.repo import SqlCompanyRepository
@@ -85,6 +86,7 @@ CurrentUser = Annotated[dict[str, Any], Depends(require_user)]
 
 async def _resolve_company_membership(
     request: Request,
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> tuple[dict[str, Any], UUID, CompanyMembership]:
     """Resolve (user_info, company_id, membership) from the request.
 
@@ -130,20 +132,19 @@ async def _resolve_company_membership(
 
     # 3. Verify company is active and membership is still valid in the DB
     user_id = UUID(user_info["sub"])
-    async with get_db() as session:
-        repo = SqlCompanyRepository(session)
-        company = await repo.get_by_id(company_id)
-        if company is not None and hasattr(company, "is_active") and not company.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "error": {
-                        "code": "company_suspended",
-                        "message": "The company account is suspended",
-                    }
-                },
-            )
-        membership = await repo.get_membership(user_id, company_id)
+    repo = SqlCompanyRepository(session)
+    company = await repo.get_by_id(company_id)
+    if company is not None and hasattr(company, "is_active") and not company.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "company_suspended",
+                    "message": "The company account is suspended",
+                }
+            },
+        )
+    membership = await repo.get_membership(user_id, company_id)
 
     if membership is None:
         raise HTTPException(
@@ -156,23 +157,23 @@ async def _resolve_company_membership(
     return user_info, company_id, membership
 
 
-async def require_company_context(request: Request) -> tuple[dict[str, Any], UUID]:
+async def require_company_context(
+    ctx: Annotated[
+        tuple[dict[str, Any], UUID, CompanyMembership], Depends(_resolve_company_membership)
+    ],
+) -> tuple[dict[str, Any], UUID]:
     """Returns (user_info, company_id). Raises 401 if unauthenticated, 403 if no company context."""
-    user_info, company_id, _ = await _resolve_company_membership(request)
+    user_info, company_id, _ = ctx
     return user_info, company_id
 
 
 async def require_company_member(
-    request: Request,
+    ctx: Annotated[
+        tuple[dict[str, Any], UUID, CompanyMembership], Depends(_resolve_company_membership)
+    ],
 ) -> tuple[dict[str, Any], UUID, CompanyMembership]:
-    """Returns (user_info, company_id, membership) for any active-company member.
-
-    A thin wrapper over ``_resolve_company_membership`` that exposes the resolved
-    membership to read-path routers so they can derive ``is_company_admin`` without
-    a second DB hit. Unlike ``require_company_admin`` it does not require the ADMIN
-    role — the caller decides what authority the role confers.
-    """
-    return await _resolve_company_membership(request)
+    """Returns (user_info, company_id, membership) for any active-company member."""
+    return ctx
 
 
 def is_company_admin(membership: CompanyMembership) -> bool:
@@ -181,15 +182,12 @@ def is_company_admin(membership: CompanyMembership) -> bool:
 
 
 async def require_company_admin(
-    request: Request,
+    ctx: Annotated[
+        tuple[dict[str, Any], UUID, CompanyMembership], Depends(_resolve_company_membership)
+    ],
 ) -> tuple[dict[str, Any], UUID, CompanyMembership]:
-    """Returns (user_info, company_id, membership), requiring CompanyRole.ADMIN in the active company.
-
-    Raises 403 with the generic body when the caller is not an admin of the active
-    company. The global ``is_admin`` JWT flag is NOT consulted here — per-company
-    admin authority comes only from the CompanyMembership role.
-    """
-    user_info, company_id, membership = await _resolve_company_membership(request)
+    """Returns (user_info, company_id, membership), requiring CompanyRole.ADMIN."""
+    user_info, company_id, membership = ctx
     if membership.role != CompanyRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -232,5 +230,10 @@ async def require_unscoped_or_full_token(request: Request) -> dict[str, Any]:
     return user_info
 
 
-CompanyContext = Annotated[tuple[dict[str, Any], Any], Depends(require_company_context)]
-CompanyAdminContext = Annotated[tuple[dict[str, Any], Any, Any], Depends(require_company_admin)]
+CompanyContext = Annotated[tuple[dict[str, Any], UUID], Depends(require_company_context)]
+CompanyMemberContext = Annotated[
+    tuple[dict[str, Any], UUID, CompanyMembership], Depends(require_company_member)
+]
+CompanyAdminContext = Annotated[
+    tuple[dict[str, Any], UUID, CompanyMembership], Depends(require_company_admin)
+]

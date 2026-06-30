@@ -3,32 +3,61 @@
 from __future__ import annotations
 
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 
-def _make_app():
+@contextmanager
+def _bypass_onboarding():
     from tessera_api.auth.bearer import require_onboarding_complete
-    from tessera_api.main import create_app
+    from tessera_api.main import app
 
-    app = create_app()
-
-    async def _noop_onboarding():
+    async def _noop():
         return None
 
-    app.dependency_overrides[require_onboarding_complete] = _noop_onboarding
-    return app
+    app.dependency_overrides[require_onboarding_complete] = _noop
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(require_onboarding_complete, None)
 
 
-def _auth_patch(user_id: str | None = None):
+@contextmanager
+def _with_company_context(user_id: str | None = None):
+    from tessera_api.auth.oidc import require_company_context
+    from tessera_api.main import app
+
     uid = user_id or str(uuid.uuid4())
     info = {"sub": uid, "id": uid, "email": "test@test.com", "is_admin": False}
-    return patch(
-        "tessera_api.routers.documents.require_company_context",
-        new=AsyncMock(return_value=(info, uuid.uuid4())),
-    )
+
+    async def _fake():
+        return info, uuid.uuid4()
+
+    app.dependency_overrides[require_company_context] = _fake
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(require_company_context, None)
+
+
+@contextmanager
+def _with_db(mock_session=None):
+    from tessera_api.adapters.database import get_db
+    from tessera_api.main import app
+
+    if mock_session is None:
+        mock_session = AsyncMock()
+
+    async def _gen():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = _gen
+    try:
+        yield mock_session
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 def _build_doc(doc_id: uuid.UUID, space_id: uuid.UUID, version_id: uuid.UUID):
@@ -61,7 +90,7 @@ def _build_version(version_id: uuid.UUID, doc_id: uuid.UUID):
 
 def test_publish_dispatches_index_task():
     """After a successful publish, index_document_version.delay() must be called."""
-    app = _make_app()
+    from tessera_api.main import app
 
     doc_id = uuid.uuid4()
     space_id = uuid.uuid4()
@@ -79,17 +108,12 @@ def test_publish_dispatches_index_task():
     mock_ver_repo.list_by_document = AsyncMock(return_value=[version])
     mock_ver_repo.update_approval = AsyncMock(return_value=version)
 
-    mock_session = AsyncMock()
-
-    @asynccontextmanager
-    async def _fake_get_db():
-        yield mock_session
-
     mock_delay = MagicMock()
 
     with (
-        _auth_patch(),
-        patch("tessera_api.routers.documents.get_db", _fake_get_db),
+        _bypass_onboarding(),
+        _with_company_context(),
+        _with_db(),
         patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
         patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
         patch("tessera_api.routers.documents.write_audit", new=AsyncMock()),
@@ -107,7 +131,6 @@ def test_publish_dispatches_index_task():
         "publish_document does not dispatch the indexing task"
     )
     call_args = mock_delay.call_args
-    # send_task("tessera.index_document_version", args=[version_id, doc_id, space_id])
     task_name = call_args[0][0] if call_args[0] else call_args[1].get("name", "")
     sent_args = call_args[1].get("args") or (call_args[0][1] if len(call_args[0]) > 1 else [])
     assert "index_document_version" in task_name

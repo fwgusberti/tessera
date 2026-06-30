@@ -3,29 +3,33 @@
 from __future__ import annotations
 
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 
-def _make_app():
+@contextmanager
+def _bypass_onboarding():
     from tessera_api.auth.bearer import require_onboarding_complete
-    from tessera_api.main import create_app
+    from tessera_api.main import app
 
-    app = create_app()
-
-    async def _noop_onboarding():
+    async def _noop():
         return None
 
-    app.dependency_overrides[require_onboarding_complete] = _noop_onboarding
-    return app
+    app.dependency_overrides[require_onboarding_complete] = _noop
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(require_onboarding_complete, None)
 
 
-def _auth_patch(user_id: str | None = None, company_admin: bool = False):
-    """Patch require_company_member; ``company_admin`` controls per-company authority."""
+@contextmanager
+def _with_company_member(user_id: str | None = None, company_admin: bool = False):
     from datetime import UTC, datetime
 
+    from tessera_api.auth.oidc import require_company_member
+    from tessera_api.main import app
     from tessera_core.domain.entities import CompanyMembership, CompanyRole
 
     uid = user_id or str(uuid.uuid4())
@@ -37,20 +41,50 @@ def _auth_patch(user_id: str | None = None, company_admin: bool = False):
         role=CompanyRole.ADMIN if company_admin else CompanyRole.MEMBER,
         joined_at=datetime.now(UTC),
     )
-    return patch(
-        "tessera_api.routers.documents.require_company_member",
-        new=AsyncMock(return_value=(info, uuid.uuid4(), membership)),
-    )
+
+    async def _fake():
+        return info, uuid.uuid4(), membership
+
+    app.dependency_overrides[require_company_member] = _fake
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(require_company_member, None)
 
 
-def _admin_auth_patch(user_id: str | None = None, is_admin: bool = False):
+@contextmanager
+def _with_admin_user(user_id: str | None = None, is_admin: bool = False):
+    from tessera_api.auth.oidc import require_user
+    from tessera_api.main import app
+
     uid = user_id or str(uuid.uuid4())
-    # admin.py imports require_user at module level (test-patchability convention),
-    # so patch the router-bound name rather than the oidc source.
-    return patch(
-        "tessera_api.routers.admin.require_user",
-        new=AsyncMock(return_value={"sub": uid, "id": uid, "email": "test@test.com", "is_admin": is_admin}),
-    )
+
+    async def _fake():
+        return {"sub": uid, "id": uid, "email": "test@test.com", "is_admin": is_admin}
+
+    app.dependency_overrides[require_user] = _fake
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(require_user, None)
+
+
+@contextmanager
+def _with_db(mock_session=None):
+    from tessera_api.adapters.database import get_db
+    from tessera_api.main import app
+
+    if mock_session is None:
+        mock_session = AsyncMock()
+
+    async def _gen():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = _gen
+    try:
+        yield mock_session
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 def _build_published_doc(doc_id: uuid.UUID, space_id: uuid.UUID, owner_id: uuid.UUID, version_id: uuid.UUID):
@@ -99,7 +133,8 @@ def _build_version(version_id: uuid.UUID, doc_id: uuid.UUID):
 
 def test_reindex_owner_dispatches_task():
     """Document owner calling reindex receives 200 and the indexing task is dispatched."""
-    app = _make_app()
+    from tessera_api.main import app
+
     owner_id = uuid.uuid4()
     doc_id = uuid.uuid4()
     space_id = uuid.uuid4()
@@ -112,17 +147,12 @@ def test_reindex_owner_dispatches_task():
     mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=doc)
     mock_ver_repo = MagicMock()
     mock_ver_repo.list_by_document = AsyncMock(return_value=[version])
-    mock_session = AsyncMock()
-
-    @asynccontextmanager
-    async def _fake_get_db():
-        yield mock_session
-
     mock_send_task = MagicMock()
 
     with (
-        _auth_patch(user_id=str(owner_id)),
-        patch("tessera_api.routers.documents.get_db", _fake_get_db),
+        _bypass_onboarding(),
+        _with_company_member(user_id=str(owner_id)),
+        _with_db(),
         patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
         patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
         patch(
@@ -146,9 +176,10 @@ def test_reindex_owner_dispatches_task():
 
 def test_reindex_admin_dispatches_task():
     """System admin (non-owner) calling reindex receives 200 and task is dispatched."""
-    app = _make_app()
+    from tessera_api.main import app
+
     owner_id = uuid.uuid4()
-    admin_id = uuid.uuid4()  # different from owner
+    admin_id = uuid.uuid4()
     doc_id = uuid.uuid4()
     space_id = uuid.uuid4()
     version_id = uuid.uuid4()
@@ -160,17 +191,12 @@ def test_reindex_admin_dispatches_task():
     mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=doc)
     mock_ver_repo = MagicMock()
     mock_ver_repo.list_by_document = AsyncMock(return_value=[version])
-    mock_session = AsyncMock()
-
-    @asynccontextmanager
-    async def _fake_get_db():
-        yield mock_session
-
     mock_send_task = MagicMock()
 
     with (
-        _auth_patch(user_id=str(admin_id), company_admin=True),
-        patch("tessera_api.routers.documents.get_db", _fake_get_db),
+        _bypass_onboarding(),
+        _with_company_member(user_id=str(admin_id), company_admin=True),
+        _with_db(),
         patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
         patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=mock_ver_repo),
         patch(
@@ -189,7 +215,8 @@ def test_reindex_admin_dispatches_task():
 
 def test_reindex_non_owner_returns_403():
     """An authenticated user who is neither owner nor admin receives 403."""
-    app = _make_app()
+    from tessera_api.main import app
+
     owner_id = uuid.uuid4()
     other_id = uuid.uuid4()
     doc_id = uuid.uuid4()
@@ -200,15 +227,11 @@ def test_reindex_non_owner_returns_403():
 
     mock_doc_repo = MagicMock()
     mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=doc)
-    mock_session = AsyncMock()
-
-    @asynccontextmanager
-    async def _fake_get_db():
-        yield mock_session
 
     with (
-        _auth_patch(user_id=str(other_id)),
-        patch("tessera_api.routers.documents.get_db", _fake_get_db),
+        _bypass_onboarding(),
+        _with_company_member(user_id=str(other_id)),
+        _with_db(),
         patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
         patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=MagicMock()),
     ):
@@ -218,24 +241,21 @@ def test_reindex_non_owner_returns_403():
     assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text}"
 
 
-# ── T011: missing document returns 403 (hides existence) ─────────────────────
+# ── T011: missing document returns 404 ───────────────────────────────────────
 
 def test_reindex_missing_document_returns_404():
-    """Reindexing a document not found in the company scope returns 404 (hides existence)."""
-    app = _make_app()
+    """Reindexing a document not found in the company scope returns 404."""
+    from tessera_api.main import app
+
     doc_id = uuid.uuid4()
 
     mock_doc_repo = MagicMock()
     mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=None)
-    mock_session = AsyncMock()
-
-    @asynccontextmanager
-    async def _fake_get_db():
-        yield mock_session
 
     with (
-        _auth_patch(company_admin=True),
-        patch("tessera_api.routers.documents.get_db", _fake_get_db),
+        _bypass_onboarding(),
+        _with_company_member(company_admin=True),
+        _with_db(),
         patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
         patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=MagicMock()),
     ):
@@ -249,7 +269,8 @@ def test_reindex_missing_document_returns_404():
 
 def test_reindex_draft_document_returns_400():
     """Reindexing a document in draft (non-published) state returns 400."""
-    app = _make_app()
+    from tessera_api.main import app
+
     owner_id = uuid.uuid4()
     doc_id = uuid.uuid4()
     space_id = uuid.uuid4()
@@ -259,15 +280,11 @@ def test_reindex_draft_document_returns_400():
 
     mock_doc_repo = MagicMock()
     mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=doc)
-    mock_session = AsyncMock()
-
-    @asynccontextmanager
-    async def _fake_get_db():
-        yield mock_session
 
     with (
-        _auth_patch(user_id=str(owner_id)),
-        patch("tessera_api.routers.documents.get_db", _fake_get_db),
+        _bypass_onboarding(),
+        _with_company_member(user_id=str(owner_id)),
+        _with_db(),
         patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
         patch("tessera_api.routers.documents.SqlDocumentVersionRepository", return_value=MagicMock()),
     ):
@@ -281,7 +298,8 @@ def test_reindex_draft_document_returns_400():
 
 def test_bulk_reindex_admin_dispatches_for_unchunked_docs():
     """Admin calling POST /admin/reindex gets tasks dispatched for all published docs with no chunks."""
-    app = _make_app()
+    from tessera_api.main import app
+
     doc1_id = uuid.uuid4()
     doc2_id = uuid.uuid4()
     ver1_id = uuid.uuid4()
@@ -297,16 +315,12 @@ def test_bulk_reindex_admin_dispatches_for_unchunked_docs():
     mock_result = MagicMock()
     mock_result.mappings.return_value.all.return_value = fake_rows
     mock_session.execute = AsyncMock(return_value=mock_result)
-
-    @asynccontextmanager
-    async def _fake_get_db():
-        yield mock_session
-
     mock_send_task = MagicMock()
 
     with (
-        _admin_auth_patch(is_admin=True),
-        patch("tessera_api.routers.admin.get_db", _fake_get_db),
+        _bypass_onboarding(),
+        _with_admin_user(is_admin=True),
+        _with_db(mock_session),
         patch(
             "tessera_api.routers.admin.get_celery_app",
             return_value=MagicMock(send_task=mock_send_task),
@@ -324,10 +338,11 @@ def test_bulk_reindex_admin_dispatches_for_unchunked_docs():
 
 def test_bulk_reindex_non_admin_returns_403():
     """A non-admin authenticated user calling POST /admin/reindex receives 403."""
-    app = _make_app()
+    from tessera_api.main import app
 
     with (
-        _admin_auth_patch(is_admin=False),
+        _bypass_onboarding(),
+        _with_admin_user(is_admin=False),
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
             response = client.post("/v1/admin/reindex")
@@ -339,22 +354,18 @@ def test_bulk_reindex_non_admin_returns_403():
 
 def test_bulk_reindex_skips_docs_with_existing_chunks():
     """When all published docs already have chunks, dispatched count is 0 and no tasks are sent."""
-    app = _make_app()
+    from tessera_api.main import app
 
     mock_session = AsyncMock()
     mock_result = MagicMock()
-    mock_result.mappings.return_value.all.return_value = []  # no docs without chunks
+    mock_result.mappings.return_value.all.return_value = []
     mock_session.execute = AsyncMock(return_value=mock_result)
-
-    @asynccontextmanager
-    async def _fake_get_db():
-        yield mock_session
-
     mock_send_task = MagicMock()
 
     with (
-        _admin_auth_patch(is_admin=True),
-        patch("tessera_api.routers.admin.get_db", _fake_get_db),
+        _bypass_onboarding(),
+        _with_admin_user(is_admin=True),
+        _with_db(mock_session),
         patch(
             "tessera_api.routers.admin.get_celery_app",
             return_value=MagicMock(send_task=mock_send_task),

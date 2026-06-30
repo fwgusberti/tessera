@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -25,13 +26,26 @@ def _within_limit_patch():
     )
 
 
+@contextmanager
+def _with_db(mock_session=None):
+    from tessera_api.adapters.database import get_db
+
+    if mock_session is None:
+        mock_session = AsyncMock()
+
+    async def _gen():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = _gen
+    try:
+        yield mock_session
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
 class TestForgotPasswordContract:
     def test_registered_email_returns_200_with_neutral_message(self):
         user = _make_user()
-        mock_get_db = MagicMock()
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
 
         mock_user_repo = AsyncMock()
         mock_user_repo.get_by_email = AsyncMock(return_value=user)
@@ -40,7 +54,7 @@ class TestForgotPasswordContract:
 
         with (
             _within_limit_patch(),
-            patch("tessera_api.routers.auth.get_db", mock_get_db),
+            _with_db(),
             patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_user_repo),
             patch("tessera_api.routers.auth.SqlPasswordResetTokenRepository", return_value=mock_prt_repo),
             patch("tessera_api.adapters.email.FastMailEmailAdapter") as mock_email_cls,
@@ -56,17 +70,12 @@ class TestForgotPasswordContract:
         assert resp.json() == _EXPECTED_BODY
 
     def test_unregistered_email_returns_200_with_same_body(self):
-        mock_get_db = MagicMock()
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
         mock_user_repo = AsyncMock()
         mock_user_repo.get_by_email = AsyncMock(return_value=None)
 
         with (
             _within_limit_patch(),
-            patch("tessera_api.routers.auth.get_db", mock_get_db),
+            _with_db(),
             patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_user_repo),
             patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
         ):
@@ -89,16 +98,12 @@ class TestForgotPasswordContract:
 
     def test_registered_and_unregistered_bodies_are_identical(self):
         user = _make_user()
-        mock_get_db = MagicMock()
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
 
         mock_user_repo = AsyncMock()
 
         with (
             _within_limit_patch(),
-            patch("tessera_api.routers.auth.get_db", mock_get_db),
+            _with_db(),
             patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_user_repo),
             patch("tessera_api.routers.auth.SqlPasswordResetTokenRepository", return_value=AsyncMock()),
             patch("tessera_api.adapters.email.FastMailEmailAdapter") as mock_email_cls,

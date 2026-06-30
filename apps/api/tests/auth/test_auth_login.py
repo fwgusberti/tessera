@@ -5,7 +5,23 @@ from __future__ import annotations
 import base64
 import json
 import uuid
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
+
+
+@contextmanager
+def _with_db(mock_session=None):
+    from tessera_api.adapters.database import get_db
+    from tessera_api.main import app
+    if mock_session is None:
+        mock_session = AsyncMock()
+    async def _gen():
+        yield mock_session
+    app.dependency_overrides[get_db] = _gen
+    try:
+        yield mock_session
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 class TestLogin:
@@ -34,31 +50,24 @@ class TestLogin:
         """Valid credentials return access_token, refresh_token, token_type, expires_in."""
         user = self._make_user_mock("alice@example.com")
 
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_email = AsyncMock(return_value=user)
+
+        stored_token = MagicMock()
+        stored_token.id = uuid.uuid4()
+        mock_rt_repo = AsyncMock()
+        mock_rt_repo.create = AsyncMock(return_value=stored_token)
+
+        mock_company_repo = AsyncMock()
+        mock_company_repo.list_memberships_for_user = AsyncMock(return_value=[])
+
         with (
-            patch("tessera_api.routers.auth.get_db") as mock_get_db,
-            patch("tessera_api.routers.auth.SqlUserRepository") as mock_user_repo_cls,
-            patch("tessera_api.routers.auth.SqlRefreshTokenRepository") as mock_rt_repo_cls,
-            patch("tessera_api.routers.auth.SqlCompanyRepository") as mock_company_repo_cls,
+            _with_db(),
+            patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_user_repo),
+            patch("tessera_api.routers.auth.SqlRefreshTokenRepository", return_value=mock_rt_repo),
+            patch("tessera_api.routers.auth.SqlCompanyRepository", return_value=mock_company_repo),
             patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            mock_user_repo = AsyncMock()
-            mock_user_repo.get_by_email = AsyncMock(return_value=user)
-            mock_user_repo_cls.return_value = mock_user_repo
-
-            stored_token = MagicMock()
-            stored_token.id = uuid.uuid4()
-            mock_rt_repo = AsyncMock()
-            mock_rt_repo.create = AsyncMock(return_value=stored_token)
-            mock_rt_repo_cls.return_value = mock_rt_repo
-
-            mock_company_repo = AsyncMock()
-            mock_company_repo.list_memberships_for_user = AsyncMock(return_value=[])
-            mock_company_repo_cls.return_value = mock_company_repo
-
             from fastapi.testclient import TestClient
             from tessera_api.main import app
 
@@ -79,19 +88,14 @@ class TestLogin:
         """Wrong password returns 401 with invalid_credentials code."""
         user = self._make_user_mock("alice@example.com", password="correctpassword")
 
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_email = AsyncMock(return_value=user)
+
         with (
-            patch("tessera_api.routers.auth.get_db") as mock_get_db,
-            patch("tessera_api.routers.auth.SqlUserRepository") as mock_user_repo_cls,
+            _with_db(),
+            patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_user_repo),
             patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            mock_user_repo = AsyncMock()
-            mock_user_repo.get_by_email = AsyncMock(return_value=user)
-            mock_user_repo_cls.return_value = mock_user_repo
-
             from fastapi.testclient import TestClient
             from tessera_api.main import app
 
@@ -106,19 +110,14 @@ class TestLogin:
 
     def test_login_unknown_email_returns_401(self):
         """Unknown email returns 401 with same code as wrong password (no disclosure)."""
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_email = AsyncMock(return_value=None)
+
         with (
-            patch("tessera_api.routers.auth.get_db") as mock_get_db,
-            patch("tessera_api.routers.auth.SqlUserRepository") as mock_user_repo_cls,
+            _with_db(),
+            patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_user_repo),
             patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            mock_user_repo = AsyncMock()
-            mock_user_repo.get_by_email = AsyncMock(return_value=None)
-            mock_user_repo_cls.return_value = mock_user_repo
-
             from fastapi.testclient import TestClient
             from tessera_api.main import app
 
@@ -136,28 +135,16 @@ class TestLogin:
         """Non-disclosure: error code is identical for wrong email vs wrong password."""
         user = self._make_user_mock("alice@example.com", password="correctpassword")
 
-        def make_db_mock(return_user):
-            mock_get_db = MagicMock()
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-            return mock_get_db, mock_session
-
         from fastapi.testclient import TestClient
         from tessera_api.main import app
 
+        mock_repo = AsyncMock()
+
         with (
-            patch("tessera_api.routers.auth.get_db") as mock_get_db,
-            patch("tessera_api.routers.auth.SqlUserRepository") as mock_repo_cls,
+            _with_db(),
+            patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_repo),
             patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            mock_repo = AsyncMock()
-            mock_repo_cls.return_value = mock_repo
-
             with TestClient(app) as client:
                 mock_repo.get_by_email = AsyncMock(return_value=None)
                 r1 = client.post("/v1/auth/login", json={"email": "ghost@example.com", "password": "pass"})
@@ -174,19 +161,14 @@ class TestLogin:
         user.email = "oidc@example.com"
         user.password_hash = None
 
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_email = AsyncMock(return_value=user)
+
         with (
-            patch("tessera_api.routers.auth.get_db") as mock_get_db,
-            patch("tessera_api.routers.auth.SqlUserRepository") as mock_user_repo_cls,
+            _with_db(),
+            patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_user_repo),
             patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            mock_user_repo = AsyncMock()
-            mock_user_repo.get_by_email = AsyncMock(return_value=user)
-            mock_user_repo_cls.return_value = mock_user_repo
-
             from fastapi.testclient import TestClient
             from tessera_api.main import app
 
@@ -230,29 +212,22 @@ def _login_with_memberships(membership_count: int):
     stored_token = MagicMock()
     stored_token.id = uuid.uuid4()
 
+    mock_user_repo = AsyncMock()
+    mock_user_repo.get_by_email = AsyncMock(return_value=user)
+
+    mock_rt_repo = AsyncMock()
+    mock_rt_repo.create = AsyncMock(return_value=stored_token)
+
+    mock_company_repo = AsyncMock()
+    mock_company_repo.list_memberships_for_user = AsyncMock(return_value=memberships)
+
     with (
-        patch("tessera_api.routers.auth.get_db") as mock_get_db,
-        patch("tessera_api.routers.auth.SqlUserRepository") as mock_user_repo_cls,
-        patch("tessera_api.routers.auth.SqlRefreshTokenRepository") as mock_rt_repo_cls,
-        patch("tessera_api.routers.auth.SqlCompanyRepository") as mock_company_repo_cls,
+        _with_db(),
+        patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_user_repo),
+        patch("tessera_api.routers.auth.SqlRefreshTokenRepository", return_value=mock_rt_repo),
+        patch("tessera_api.routers.auth.SqlCompanyRepository", return_value=mock_company_repo),
         patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
     ):
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-        mock_user_repo = AsyncMock()
-        mock_user_repo.get_by_email = AsyncMock(return_value=user)
-        mock_user_repo_cls.return_value = mock_user_repo
-
-        mock_rt_repo = AsyncMock()
-        mock_rt_repo.create = AsyncMock(return_value=stored_token)
-        mock_rt_repo_cls.return_value = mock_rt_repo
-
-        mock_company_repo = AsyncMock()
-        mock_company_repo.list_memberships_for_user = AsyncMock(return_value=memberships)
-        mock_company_repo_cls.return_value = mock_company_repo
-
         from fastapi.testclient import TestClient
         from tessera_api.main import app
 

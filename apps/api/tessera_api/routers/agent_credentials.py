@@ -15,13 +15,14 @@ import secrets
 import uuid
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from tessera_api.adapters.audit import write_audit
-from tessera_api.adapters.database import get_db
+from tessera_api.adapters.database import SessionDep
 from tessera_api.adapters.repo import SqlAgentCredentialRepository, SqlSpaceRepository
-from tessera_api.auth.oidc import require_company_admin
+from tessera_api.auth.oidc import CompanyAdminContext
 from tessera_core.domain.entities import AgentCredential, Confidentiality
 
 router = APIRouter(tags=["agent_credentials"])
@@ -42,43 +43,48 @@ def _not_found() -> HTTPException:
 
 
 async def _audit_cross_tenant_denied(
-    actor_id: UUID, credential_id: UUID, company_id: UUID, metadata_extra: dict | None = None
+    session: AsyncSession,
+    actor_id: UUID,
+    credential_id: UUID,
+    company_id: UUID,
+    metadata_extra: dict | None = None,
 ) -> None:
     metadata = {"company_id": str(company_id)}
     if metadata_extra:
         metadata.update(metadata_extra)
-    async with get_db() as audit_session:
-        await write_audit(
-            audit_session,
-            actor_type="user",
-            actor_id=actor_id,
-            action="cross_tenant_denied",
-            entity_type="agent_credential",
-            entity_id=credential_id,
-            metadata=metadata,
-        )
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=actor_id,
+        action="cross_tenant_denied",
+        entity_type="agent_credential",
+        entity_id=credential_id,
+        metadata=metadata,
+    )
 
 
 @router.post("/agent-credentials", status_code=status.HTTP_201_CREATED)
-async def create_credential(body: CreateCredentialRequest, request: Request) -> dict:
-    user_info, company_id, _membership = await require_company_admin(request)
+async def create_credential(
+    body: CreateCredentialRequest, ctx: CompanyAdminContext, session: SessionDep
+) -> dict:
+    user_info, company_id, _membership = ctx
     actor_id = UUID(user_info["sub"])
     credential_id = uuid.uuid4()
 
     # Every scoped space must belong to the active company (FR-006).
-    async with get_db() as session:
-        space_repo = SqlSpaceRepository(session)
-        invalid_space_id: UUID | None = None
-        for space_id in body.scoped_space_ids:
-            space = await space_repo.get_by_id_for_company(space_id, company_id)
-            if space is None:
-                invalid_space_id = space_id
-                break
+    space_repo = SqlSpaceRepository(session)
+    invalid_space_id: UUID | None = None
+    for space_id in body.scoped_space_ids:
+        space = await space_repo.get_by_id_for_company(space_id, company_id)
+        if space is None:
+            invalid_space_id = space_id
+            break
 
     if invalid_space_id is not None:
         await _audit_cross_tenant_denied(
-            actor_id, credential_id, company_id, {"space_id": str(invalid_space_id)}
+            session, actor_id, credential_id, company_id, {"space_id": str(invalid_space_id)}
         )
+        await session.commit()
         raise _not_found()
 
     # Generate a random token — shown once
@@ -94,47 +100,46 @@ async def create_credential(body: CreateCredentialRequest, request: Request) -> 
         created_by_user_id=user_info.get("id"),
         company_id=company_id,
     )
-    async with get_db() as session:
-        repo = SqlAgentCredentialRepository(session)
-        created = await repo.create(credential)
-        await write_audit(
-            session,
-            actor_type="user",
-            actor_id=actor_id,
-            action="create_credential",
-            entity_type="agent_credential",
-            entity_id=created.id,
-            metadata={"company_id": str(company_id)},
-        )
+    repo = SqlAgentCredentialRepository(session)
+    created = await repo.create(credential)
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=actor_id,
+        action="create_credential",
+        entity_type="agent_credential",
+        entity_id=created.id,
+        metadata={"company_id": str(company_id)},
+    )
 
     return {"credential": created.model_dump(exclude={"token_hash"}), "token": raw_token}
 
 
 @router.post("/agent-credentials/{credential_id}/revoke")
-async def revoke_credential(credential_id: UUID, request: Request) -> dict:
-    user_info, company_id, _membership = await require_company_admin(request)
+async def revoke_credential(
+    credential_id: UUID, ctx: CompanyAdminContext, session: SessionDep
+) -> dict:
+    user_info, company_id, _membership = ctx
     actor_id = UUID(user_info["sub"])
 
-    async with get_db() as session:
-        repo = SqlAgentCredentialRepository(session)
-        existing = await repo.get_by_id_for_company(credential_id, company_id)
+    repo = SqlAgentCredentialRepository(session)
+    existing = await repo.get_by_id_for_company(credential_id, company_id)
 
     if existing is None:
         # Not ours — leave the token active and deny indistinguishably.
-        await _audit_cross_tenant_denied(actor_id, credential_id, company_id)
+        await _audit_cross_tenant_denied(session, actor_id, credential_id, company_id)
+        await session.commit()
         raise _not_found()
 
-    async with get_db() as session:
-        repo = SqlAgentCredentialRepository(session)
-        revoked = await repo.revoke(credential_id)
-        await write_audit(
-            session,
-            actor_type="user",
-            actor_id=actor_id,
-            action="revoke_credential",
-            entity_type="agent_credential",
-            entity_id=credential_id,
-            metadata={"company_id": str(company_id)},
-        )
+    revoked = await repo.revoke(credential_id)
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=actor_id,
+        action="revoke_credential",
+        entity_type="agent_credential",
+        entity_id=credential_id,
+        metadata={"company_id": str(company_id)},
+    )
 
     return {"credential": revoked.model_dump(exclude={"token_hash"})}

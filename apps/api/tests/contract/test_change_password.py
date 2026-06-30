@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -26,12 +27,24 @@ def _access_token(user: MagicMock) -> str:
     return create_access_token(user.id, user.email, user.is_admin)
 
 
-def _patch_db(user: MagicMock, rt_hash: str = "deadbeef"):
-    mock_get_db = MagicMock()
-    mock_session = AsyncMock()
-    mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+@contextmanager
+def _with_db(mock_session=None):
+    from tessera_api.adapters.database import get_db
 
+    if mock_session is None:
+        mock_session = AsyncMock()
+
+    async def _gen():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = _gen
+    try:
+        yield mock_session
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def _make_repos(user: MagicMock):
     mock_user_repo = AsyncMock()
     mock_user_repo.get_by_id = AsyncMock(return_value=user)
 
@@ -43,17 +56,17 @@ def _patch_db(user: MagicMock, rt_hash: str = "deadbeef"):
     mock_rt_repo.revoke = AsyncMock()
     mock_rt_repo.revoke_all_except = AsyncMock()
 
-    return mock_get_db, mock_session, mock_user_repo, mock_rt_repo
+    return mock_user_repo, mock_rt_repo
 
 
 class TestChangePasswordContract:
     def test_success_returns_200_with_new_tokens(self):
         user = _make_user()
         access_token = _access_token(user)
-        mock_get_db, mock_session, mock_user_repo, mock_rt_repo = _patch_db(user)
+        mock_user_repo, mock_rt_repo = _make_repos(user)
 
         with (
-            patch("tessera_api.routers.auth.get_db", mock_get_db),
+            _with_db(),
             patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_user_repo),
             patch("tessera_api.routers.auth.SqlRefreshTokenRepository", return_value=mock_rt_repo),
             patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
@@ -79,10 +92,10 @@ class TestChangePasswordContract:
     def test_wrong_current_password_returns_401(self):
         user = _make_user("OldPass99!")
         access_token = _access_token(user)
-        mock_get_db, mock_session, mock_user_repo, mock_rt_repo = _patch_db(user)
+        mock_user_repo, mock_rt_repo = _make_repos(user)
 
         with (
-            patch("tessera_api.routers.auth.get_db", mock_get_db),
+            _with_db(),
             patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_user_repo),
             patch("tessera_api.routers.auth.SqlRefreshTokenRepository", return_value=mock_rt_repo),
             patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
@@ -105,10 +118,10 @@ class TestChangePasswordContract:
     def test_password_mismatch_returns_400(self):
         user = _make_user()
         access_token = _access_token(user)
-        mock_get_db, _, mock_user_repo, mock_rt_repo = _patch_db(user)
+        mock_user_repo, mock_rt_repo = _make_repos(user)
 
         with (
-            patch("tessera_api.routers.auth.get_db", mock_get_db),
+            _with_db(),
             patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_user_repo),
             patch("tessera_api.routers.auth.SqlRefreshTokenRepository", return_value=mock_rt_repo),
             patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),
@@ -131,10 +144,10 @@ class TestChangePasswordContract:
     def test_weak_new_password_returns_400(self):
         user = _make_user()
         access_token = _access_token(user)
-        mock_get_db, _, mock_user_repo, mock_rt_repo = _patch_db(user)
+        mock_user_repo, mock_rt_repo = _make_repos(user)
 
         with (
-            patch("tessera_api.routers.auth.get_db", mock_get_db),
+            _with_db(),
             patch("tessera_api.routers.auth.SqlUserRepository", return_value=mock_user_repo),
             patch("tessera_api.routers.auth.SqlRefreshTokenRepository", return_value=mock_rt_repo),
             patch("tessera_api.routers.auth.write_audit", new_callable=AsyncMock),

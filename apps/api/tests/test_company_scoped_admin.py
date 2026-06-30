@@ -44,17 +44,69 @@ def _bypass_onboarding_guard():
         app.dependency_overrides.pop(require_onboarding_complete, None)
 
 
-def _mock_db():
-    mock_get_db = MagicMock()
-    mock_session = AsyncMock()
-    mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-    return mock_get_db
+def _admin_user_patch(is_admin: bool, actor_id: uuid.UUID | None = None):
+    """Return (actor_id, ctx_manager) that overrides require_user via dependency_overrides."""
+    actor_id = actor_id or uuid.uuid4()
+
+    @contextmanager
+    def _ctx():
+        from tessera_api.auth.oidc import require_user
+        from tessera_api.main import app as _app
+
+        async def _fake():
+            return {"sub": str(actor_id), "id": str(actor_id), "is_admin": is_admin}
+
+        _app.dependency_overrides[require_user] = _fake
+        try:
+            yield
+        finally:
+            _app.dependency_overrides.pop(require_user, None)
+
+    return actor_id, _ctx()
+
+
+@contextmanager
+def _with_custom_session(mock_session=None):
+    """Temporarily override get_db to yield a specific mock_session."""
+    from tessera_api.adapters.database import get_db
+    from tessera_api.main import app as _app
+
+    if mock_session is None:
+        mock_session = AsyncMock()
+
+    async def _gen():
+        yield mock_session
+
+    prev = _app.dependency_overrides.get(get_db)
+    _app.dependency_overrides[get_db] = _gen
+    try:
+        yield mock_session
+    finally:
+        if prev is not None:
+            _app.dependency_overrides[get_db] = prev
+        else:
+            _app.dependency_overrides.pop(get_db, None)
 
 
 def _cross_tenant_denied_count(mock_audit) -> int:
     calls = mock_audit.await_args_list or mock_audit.call_args_list
     return sum(1 for c in calls if c.kwargs.get("action") == "cross_tenant_denied")
+
+
+def _patch_audit_repo():
+    """Patch admin's SqlAuditRepository, returning (mock_cls, append_mock)."""
+    append_mock = AsyncMock()
+    repo = MagicMock()
+    repo.append = append_mock
+    return patch("tessera_api.routers.admin.SqlAuditRepository", return_value=repo), append_mock
+
+
+def _admin_access_records(append_mock):
+    return [
+        c.args[0]
+        for c in append_mock.await_args_list
+        if getattr(c.args[0], "action", None) == "cross_company_admin_access"
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +122,6 @@ class TestUS1AdminAuthorityConfined:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.agent_credentials.get_db", _mock_db()),
                 patch("tessera_api.routers.agent_credentials.SqlSpaceRepository") as mock_space_cls,
                 patch(
                     "tessera_api.routers.agent_credentials.SqlAgentCredentialRepository"
@@ -108,7 +159,6 @@ class TestUS1AdminAuthorityConfined:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.agent_credentials.get_db", _mock_db()),
                 patch(
                     "tessera_api.routers.agent_credentials.SqlAgentCredentialRepository"
                 ) as mock_cred_cls,
@@ -143,12 +193,9 @@ class TestUS1AdminAuthorityConfined:
         res_pending.scalar.return_value = 3
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(side_effect=[res_queries, res_pending])
-        mock_db = MagicMock()
-        mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
 
         with _bypass_onboarding_guard():
-            with patch("tessera_api.routers.metrics.get_db", mock_db):
+            with _with_custom_session(mock_session):
                 from tessera_api.main import app
 
                 with TestClient(app) as client:
@@ -186,7 +233,6 @@ class TestUS2NoCrossCompanyVisibility:
         for doc_id in (beta_doc_id, random_id):
             with _bypass_onboarding_guard():
                 with (
-                    patch("tessera_api.routers.documents.get_db", _mock_db()),
                     patch("tessera_api.routers.documents.SqlDocumentRepository") as mock_doc_cls,
                     patch(
                         "tessera_api.routers.documents.write_audit", new_callable=AsyncMock
@@ -226,7 +272,6 @@ class TestUS3PerCompanyAuthority:
         # --- A active: ADMIN → success ---
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.agent_credentials.get_db", _mock_db()),
                 patch("tessera_api.routers.agent_credentials.SqlSpaceRepository") as mock_space_cls,
                 patch(
                     "tessera_api.routers.agent_credentials.SqlAgentCredentialRepository"
@@ -270,7 +315,7 @@ class TestUS4OutsideAdminsDenied:
         beta_doc_id = uuid.uuid4()
 
         with (
-            _bypass_onboarding_guard(), patch("tessera_api.routers.documents.get_db", _mock_db()),
+            _bypass_onboarding_guard(),
             patch("tessera_api.routers.documents.SqlDocumentRepository") as mock_doc_cls,
             patch(
                 "tessera_api.routers.documents.write_audit", new_callable=AsyncMock
@@ -298,7 +343,7 @@ class TestUS4OutsideAdminsDenied:
         beta_doc_id = uuid.uuid4()
 
         with (
-            _bypass_onboarding_guard(), patch("tessera_api.routers.documents.get_db", _mock_db()),
+            _bypass_onboarding_guard(),
             patch("tessera_api.routers.documents.SqlDocumentRepository") as mock_doc_cls,
             patch("tessera_api.routers.documents.SqlDocumentVersionRepository"),
             patch(
@@ -331,33 +376,6 @@ class TestUS4OutsideAdminsDenied:
 # ---------------------------------------------------------------------------
 
 
-def _admin_user_patch(is_admin: bool, actor_id: uuid.UUID | None = None):
-    actor_id = actor_id or uuid.uuid4()
-    p = patch(
-        "tessera_api.routers.admin.require_user",
-        new=AsyncMock(
-            return_value={"sub": str(actor_id), "id": str(actor_id), "is_admin": is_admin}
-        ),
-    )
-    return actor_id, p
-
-
-def _patch_audit_repo():
-    """Patch admin's SqlAuditRepository, returning (mock_cls, append_mock)."""
-    append_mock = AsyncMock()
-    repo = MagicMock()
-    repo.append = append_mock
-    return patch("tessera_api.routers.admin.SqlAuditRepository", return_value=repo), append_mock
-
-
-def _admin_access_records(append_mock):
-    return [
-        c.args[0]
-        for c in append_mock.await_args_list
-        if getattr(c.args[0], "action", None) == "cross_company_admin_access"
-    ]
-
-
 class TestOperatorSurfaceAudited:
     """Contract C-005: every cross-company operator read/write is audited exactly once."""
 
@@ -369,7 +387,7 @@ class TestOperatorSurfaceAudited:
 
         with (
             p_user,
-            patch("tessera_api.routers.admin.get_db", _mock_db()),
+            _with_custom_session(),
             patch("tessera_api.routers.admin.SqlSpaceRepository") as mock_space_cls,
             p_audit,
         ):
@@ -408,7 +426,7 @@ class TestOperatorSurfaceAudited:
 
         with (
             p_user,
-            patch("tessera_api.routers.admin.get_db", _mock_db()),
+            _with_custom_session(),
             patch("tessera_api.routers.admin.SqlSpaceRepository") as mock_space_cls,
             p_audit,
         ):
@@ -458,15 +476,12 @@ class TestOperatorSurfaceAudited:
         mock_result = MagicMock()
         mock_result.mappings.return_value.all.return_value = rows
         mock_session.execute = AsyncMock(return_value=mock_result)
-        mock_db = MagicMock()
-        mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
 
         from tessera_api.main import app
 
         with (
             p_user,
-            patch("tessera_api.routers.admin.get_db", mock_db),
+            _with_custom_session(mock_session),
             patch("tessera_api.routers.admin.get_celery_app") as mock_celery,
             p_audit,
         ):

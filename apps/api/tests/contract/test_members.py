@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -40,9 +39,12 @@ def _company_membership(user_id: uuid.UUID, role: "CompanyRole | None" = None) -
     )
 
 
-@asynccontextmanager
-async def _mock_db(session: AsyncMock = None):
-    yield session or AsyncMock()
+def _ctx(actor_id: uuid.UUID) -> tuple:
+    return (
+        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
+        uuid.uuid4(),
+        _company_membership(actor_id),
+    )
 
 
 class TestInviteMemberContract:
@@ -50,58 +52,29 @@ class TestInviteMemberContract:
 
     @pytest.mark.anyio
     async def test_invite_calls_service_invite_and_returns_201(self):
-        from tessera_api.routers.members import invite_member
+        from tessera_api.routers.members import invite_member, InviteMemberRequest
 
         space_id = uuid.uuid4()
         actor_id = uuid.uuid4()
         target_id = uuid.uuid4()
+        session = AsyncMock()
         membership = _make_membership(space_id, target_id, SpaceRole.EDITOR)
 
         mock_svc = AsyncMock()
         mock_svc.invite.return_value = membership
 
+        mock_user = AsyncMock()
+        mock_user.get_by_id.return_value = _make_user(actor_id)
+
         with (
-            patch(
-                "tessera_api.routers.members.require_company_member",
-                new=AsyncMock(
-                    return_value=(
-                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
-                        uuid.uuid4(),
-                        _company_membership(actor_id),
-                    )
-                ),
-            ),
-            patch(
-                "tessera_api.routers.members._require_space_in_company",
-                new=AsyncMock(return_value=None),
-            ),
-            patch("tessera_api.routers.members.get_db") as mock_get_db,
-            patch(
-                "tessera_api.routers.members.SqlUserRepository"
-            ) as mock_user_repo_cls,
-            patch(
-                "tessera_api.routers.members.SqlSpaceMembershipRepository"
-            ) as mock_membership_repo_cls,
-            patch(
-                "tessera_api.routers.members.SqlAuditRepository"
-            ) as mock_audit_repo_cls,
-            patch(
-                "tessera_api.routers.members.MembershipService",
-                return_value=mock_svc,
-            ),
+            patch("tessera_api.routers.members._require_space_in_company", new=AsyncMock(return_value=None)),
+            patch("tessera_api.routers.members.SqlUserRepository", return_value=mock_user),
+            patch("tessera_api.routers.members.SqlSpaceMembershipRepository"),
+            patch("tessera_api.routers.members.SqlAuditRepository"),
+            patch("tessera_api.routers.members.MembershipService", return_value=mock_svc),
         ):
-            session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            mock_user = AsyncMock()
-            mock_user.get_by_id.return_value = _make_user(actor_id)
-            mock_user_repo_cls.return_value = mock_user
-
-            from tessera_api.routers.members import InviteMemberRequest
-
             body = InviteMemberRequest(user_id=target_id, role=SpaceRole.EDITOR)
-            result = await invite_member(space_id, body, MagicMock())
+            result = await invite_member(space_id, body, _ctx(actor_id), session)
 
         mock_svc.invite.assert_called_once()
         assert result["membership"]["role"] == SpaceRole.EDITOR.value
@@ -110,47 +83,28 @@ class TestInviteMemberContract:
     async def test_invite_returns_403_on_permission_error(self):
         from fastapi import HTTPException
 
-        from tessera_api.routers.members import invite_member
+        from tessera_api.routers.members import invite_member, InviteMemberRequest
 
         space_id = uuid.uuid4()
         actor_id = uuid.uuid4()
+        session = AsyncMock()
 
         mock_svc = AsyncMock()
         mock_svc.invite.side_effect = PermissionError("not admin")
 
+        mock_user = AsyncMock()
+        mock_user.get_by_id.return_value = _make_user(actor_id)
+
         with (
-            patch(
-                "tessera_api.routers.members.require_company_member",
-                new=AsyncMock(
-                    return_value=(
-                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
-                        uuid.uuid4(),
-                        _company_membership(actor_id),
-                    )
-                ),
-            ),
-            patch(
-                "tessera_api.routers.members._require_space_in_company",
-                new=AsyncMock(return_value=None),
-            ),
-            patch("tessera_api.routers.members.get_db") as mock_get_db,
-            patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
+            patch("tessera_api.routers.members._require_space_in_company", new=AsyncMock(return_value=None)),
+            patch("tessera_api.routers.members.SqlUserRepository", return_value=mock_user),
             patch("tessera_api.routers.members.SqlSpaceMembershipRepository"),
             patch("tessera_api.routers.members.SqlAuditRepository"),
             patch("tessera_api.routers.members.MembershipService", return_value=mock_svc),
         ):
-            session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-            mock_user = AsyncMock()
-            mock_user.get_by_id.return_value = _make_user(actor_id)
-            mock_user_repo_cls.return_value = mock_user
-
-            from tessera_api.routers.members import InviteMemberRequest
-
             body = InviteMemberRequest(user_id=uuid.uuid4(), role=SpaceRole.VIEWER)
             with pytest.raises(HTTPException) as exc_info:
-                await invite_member(space_id, body, MagicMock())
+                await invite_member(space_id, body, _ctx(actor_id), session)
             assert exc_info.value.status_code == 403
 
 
@@ -163,43 +117,22 @@ class TestListMembersContract:
 
         space_id = uuid.uuid4()
         actor_id = uuid.uuid4()
+        session = AsyncMock()
         memberships = [_make_membership(space_id, actor_id, SpaceRole.ADMIN)]
 
+        actor = _make_user(actor_id)
+        mock_user = AsyncMock()
+        mock_user.get_by_id.return_value = actor
+
+        mock_membership_repo = AsyncMock()
+        mock_membership_repo.list_by_space.return_value = memberships
+
         with (
-            patch(
-                "tessera_api.routers.members.require_company_member",
-                new=AsyncMock(
-                    return_value=(
-                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
-                        uuid.uuid4(),
-                        _company_membership(actor_id),
-                    )
-                ),
-            ),
-            patch(
-                "tessera_api.routers.members.validate_space_for_company",
-                new=AsyncMock(return_value=None),
-            ),
-            patch("tessera_api.routers.members.get_db") as mock_get_db,
-            patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
-            patch(
-                "tessera_api.routers.members.SqlSpaceMembershipRepository"
-            ) as mock_membership_repo_cls,
+            patch("tessera_api.routers.members.validate_space_for_company", new=AsyncMock(return_value=None)),
+            patch("tessera_api.routers.members.SqlUserRepository", return_value=mock_user),
+            patch("tessera_api.routers.members.SqlSpaceMembershipRepository", return_value=mock_membership_repo),
         ):
-            session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            actor = _make_user(actor_id)
-            mock_user = AsyncMock()
-            mock_user.get_by_id.return_value = actor
-            mock_user_repo_cls.return_value = mock_user
-
-            mock_membership_repo = AsyncMock()
-            mock_membership_repo.list_by_space.return_value = memberships
-            mock_membership_repo_cls.return_value = mock_membership_repo
-
-            result = await list_members(space_id, MagicMock())
+            result = await list_members(space_id, _ctx(actor_id), session)
 
         assert "members" in result
         assert len(result["members"]) == 1
@@ -214,42 +147,21 @@ class TestGetMyMembershipContract:
 
         space_id = uuid.uuid4()
         actor_id = uuid.uuid4()
+        session = AsyncMock()
         membership = _make_membership(space_id, actor_id, SpaceRole.VIEWER)
 
+        mock_user = AsyncMock()
+        mock_user.get_by_id.return_value = _make_user(actor_id)
+
+        mock_membership_repo = AsyncMock()
+        mock_membership_repo.get.return_value = membership
+
         with (
-            patch(
-                "tessera_api.routers.members.require_company_member",
-                new=AsyncMock(
-                    return_value=(
-                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
-                        uuid.uuid4(),
-                        _company_membership(actor_id),
-                    )
-                ),
-            ),
-            patch(
-                "tessera_api.routers.members._require_space_in_company",
-                new=AsyncMock(return_value=None),
-            ),
-            patch("tessera_api.routers.members.get_db") as mock_get_db,
-            patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
-            patch(
-                "tessera_api.routers.members.SqlSpaceMembershipRepository"
-            ) as mock_membership_repo_cls,
+            patch("tessera_api.routers.members._require_space_in_company", new=AsyncMock(return_value=None)),
+            patch("tessera_api.routers.members.SqlUserRepository", return_value=mock_user),
+            patch("tessera_api.routers.members.SqlSpaceMembershipRepository", return_value=mock_membership_repo),
         ):
-            session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            mock_user = AsyncMock()
-            mock_user.get_by_id.return_value = _make_user(actor_id)
-            mock_user_repo_cls.return_value = mock_user
-
-            mock_membership_repo = AsyncMock()
-            mock_membership_repo.get.return_value = membership
-            mock_membership_repo_cls.return_value = mock_membership_repo
-
-            result = await get_my_membership(space_id, MagicMock())
+            result = await get_my_membership(space_id, _ctx(actor_id), session)
 
         assert result["membership"]["role"] == SpaceRole.VIEWER.value
 
@@ -261,42 +173,21 @@ class TestGetMyMembershipContract:
 
         space_id = uuid.uuid4()
         actor_id = uuid.uuid4()
+        session = AsyncMock()
+
+        mock_user = AsyncMock()
+        mock_user.get_by_id.return_value = _make_user(actor_id)
+
+        mock_membership_repo = AsyncMock()
+        mock_membership_repo.get.return_value = None
 
         with (
-            patch(
-                "tessera_api.routers.members.require_company_member",
-                new=AsyncMock(
-                    return_value=(
-                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
-                        uuid.uuid4(),
-                        _company_membership(actor_id),
-                    )
-                ),
-            ),
-            patch(
-                "tessera_api.routers.members._require_space_in_company",
-                new=AsyncMock(return_value=None),
-            ),
-            patch("tessera_api.routers.members.get_db") as mock_get_db,
-            patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
-            patch(
-                "tessera_api.routers.members.SqlSpaceMembershipRepository"
-            ) as mock_membership_repo_cls,
+            patch("tessera_api.routers.members._require_space_in_company", new=AsyncMock(return_value=None)),
+            patch("tessera_api.routers.members.SqlUserRepository", return_value=mock_user),
+            patch("tessera_api.routers.members.SqlSpaceMembershipRepository", return_value=mock_membership_repo),
         ):
-            session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            mock_user = AsyncMock()
-            mock_user.get_by_id.return_value = _make_user(actor_id)
-            mock_user_repo_cls.return_value = mock_user
-
-            mock_membership_repo = AsyncMock()
-            mock_membership_repo.get.return_value = None
-            mock_membership_repo_cls.return_value = mock_membership_repo
-
             with pytest.raises(HTTPException) as exc_info:
-                await get_my_membership(space_id, MagicMock())
+                await get_my_membership(space_id, _ctx(actor_id), session)
             assert exc_info.value.status_code == 404
 
 
@@ -305,49 +196,29 @@ class TestChangeRoleContract:
 
     @pytest.mark.anyio
     async def test_change_role_returns_updated_membership(self):
-        from tessera_api.routers.members import change_member_role
+        from tessera_api.routers.members import change_member_role, ChangeRoleRequest
 
         space_id = uuid.uuid4()
         actor_id = uuid.uuid4()
         target_id = uuid.uuid4()
+        session = AsyncMock()
         updated = _make_membership(space_id, target_id, SpaceRole.EDITOR)
 
         mock_svc = AsyncMock()
         mock_svc.change_role.return_value = updated
 
+        mock_user = AsyncMock()
+        mock_user.get_by_id.return_value = _make_user(actor_id)
+
         with (
-            patch(
-                "tessera_api.routers.members.require_company_member",
-                new=AsyncMock(
-                    return_value=(
-                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
-                        uuid.uuid4(),
-                        _company_membership(actor_id),
-                    )
-                ),
-            ),
-            patch(
-                "tessera_api.routers.members._require_space_in_company",
-                new=AsyncMock(return_value=None),
-            ),
-            patch("tessera_api.routers.members.get_db") as mock_get_db,
-            patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
+            patch("tessera_api.routers.members._require_space_in_company", new=AsyncMock(return_value=None)),
+            patch("tessera_api.routers.members.SqlUserRepository", return_value=mock_user),
             patch("tessera_api.routers.members.SqlSpaceMembershipRepository"),
             patch("tessera_api.routers.members.SqlAuditRepository"),
             patch("tessera_api.routers.members.MembershipService", return_value=mock_svc),
         ):
-            session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            mock_user = AsyncMock()
-            mock_user.get_by_id.return_value = _make_user(actor_id)
-            mock_user_repo_cls.return_value = mock_user
-
-            from tessera_api.routers.members import ChangeRoleRequest
-
             body = ChangeRoleRequest(role=SpaceRole.EDITOR)
-            result = await change_member_role(space_id, target_id, body, MagicMock())
+            result = await change_member_role(space_id, target_id, body, _ctx(actor_id), session)
 
         mock_svc.change_role.assert_called_once()
         assert result["membership"]["role"] == SpaceRole.EDITOR.value
@@ -356,49 +227,29 @@ class TestChangeRoleContract:
     async def test_change_role_returns_409_on_last_admin(self):
         from fastapi import HTTPException
 
-        from tessera_api.routers.members import change_member_role
+        from tessera_api.routers.members import change_member_role, ChangeRoleRequest
 
         space_id = uuid.uuid4()
         actor_id = uuid.uuid4()
         target_id = uuid.uuid4()
+        session = AsyncMock()
 
         mock_svc = AsyncMock()
         mock_svc.change_role.side_effect = ValueError("last admin")
 
+        mock_user = AsyncMock()
+        mock_user.get_by_id.return_value = _make_user(actor_id)
+
         with (
-            patch(
-                "tessera_api.routers.members.require_company_member",
-                new=AsyncMock(
-                    return_value=(
-                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
-                        uuid.uuid4(),
-                        _company_membership(actor_id),
-                    )
-                ),
-            ),
-            patch(
-                "tessera_api.routers.members._require_space_in_company",
-                new=AsyncMock(return_value=None),
-            ),
-            patch("tessera_api.routers.members.get_db") as mock_get_db,
-            patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
+            patch("tessera_api.routers.members._require_space_in_company", new=AsyncMock(return_value=None)),
+            patch("tessera_api.routers.members.SqlUserRepository", return_value=mock_user),
             patch("tessera_api.routers.members.SqlSpaceMembershipRepository"),
             patch("tessera_api.routers.members.SqlAuditRepository"),
             patch("tessera_api.routers.members.MembershipService", return_value=mock_svc),
         ):
-            session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            mock_user = AsyncMock()
-            mock_user.get_by_id.return_value = _make_user(actor_id)
-            mock_user_repo_cls.return_value = mock_user
-
-            from tessera_api.routers.members import ChangeRoleRequest
-
             body = ChangeRoleRequest(role=SpaceRole.VIEWER)
             with pytest.raises(HTTPException) as exc_info:
-                await change_member_role(space_id, target_id, body, MagicMock())
+                await change_member_role(space_id, target_id, body, _ctx(actor_id), session)
             assert exc_info.value.status_code == 409
 
 
@@ -414,40 +265,22 @@ class TestRemoveMemberContract:
         space_id = uuid.uuid4()
         actor_id = uuid.uuid4()
         target_id = uuid.uuid4()
+        session = AsyncMock()
 
         mock_svc = AsyncMock()
         mock_svc.remove.return_value = None
 
+        mock_user = AsyncMock()
+        mock_user.get_by_id.return_value = _make_user(actor_id)
+
         with (
-            patch(
-                "tessera_api.routers.members.require_company_member",
-                new=AsyncMock(
-                    return_value=(
-                        {"sub": str(actor_id), "id": str(actor_id), "is_admin": False},
-                        uuid.uuid4(),
-                        _company_membership(actor_id),
-                    )
-                ),
-            ),
-            patch(
-                "tessera_api.routers.members._require_space_in_company",
-                new=AsyncMock(return_value=None),
-            ),
-            patch("tessera_api.routers.members.get_db") as mock_get_db,
-            patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
+            patch("tessera_api.routers.members._require_space_in_company", new=AsyncMock(return_value=None)),
+            patch("tessera_api.routers.members.SqlUserRepository", return_value=mock_user),
             patch("tessera_api.routers.members.SqlSpaceMembershipRepository"),
             patch("tessera_api.routers.members.SqlAuditRepository"),
             patch("tessera_api.routers.members.MembershipService", return_value=mock_svc),
         ):
-            session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            mock_user = AsyncMock()
-            mock_user.get_by_id.return_value = _make_user(actor_id)
-            mock_user_repo_cls.return_value = mock_user
-
-            result = await remove_member(space_id, target_id, MagicMock())
+            result = await remove_member(space_id, target_id, _ctx(actor_id), session)
 
         mock_svc.remove.assert_called_once()
         assert isinstance(result, Response)

@@ -3,9 +3,42 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from contextlib import contextmanager
+from unittest.mock import AsyncMock, patch
 
 import pytest
+
+from tessera_api.adapters.database import get_db
+from tessera_api.main import app
+
+
+@contextmanager
+def _override_db(mock_session: AsyncMock | None = None):
+    """Context manager that overrides get_db with a mock session for the duration."""
+    if mock_session is None:
+        mock_session = AsyncMock()
+
+    async def _fake_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = _fake_db
+    try:
+        yield mock_session
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def _patched_membership_resolution(get_membership_side_effect):
+    """Patch oidc's membership resolution with a custom get_membership side effect."""
+    mock_session = AsyncMock()
+    mock_company_repo = AsyncMock()
+    mock_company_repo.get_membership = AsyncMock(side_effect=get_membership_side_effect)
+    mock_company_repo.get_by_id = AsyncMock(return_value=None)
+
+    return (
+        _override_db(mock_session),
+        patch("tessera_api.auth.oidc.SqlCompanyRepository", return_value=mock_company_repo),
+    )
 
 
 @pytest.fixture()
@@ -20,9 +53,6 @@ def two_company_setup():
     Returns:
         (token_a, company_a_id, token_b, company_b_id)
     """
-    import contextlib
-    from unittest.mock import patch
-
     from tessera_api.auth.jwt_auth import create_access_token
     from tessera_core.domain.entities import CompanyMembership, CompanyRole
 
@@ -41,39 +71,18 @@ def two_company_setup():
             role=CompanyRole.MEMBER, joined_at=now,
         )
 
-    mock_db = MagicMock()
     mock_session = AsyncMock()
-    mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
     mock_company_repo = AsyncMock()
     mock_company_repo.get_membership = AsyncMock(
         side_effect=lambda uid, cid: _make_membership(uid, cid)
     )
+    mock_company_repo.get_by_id = AsyncMock(return_value=None)
 
     with (
-        patch("tessera_api.auth.oidc.get_db", mock_db),
+        _override_db(mock_session),
         patch("tessera_api.auth.oidc.SqlCompanyRepository", return_value=mock_company_repo),
     ):
         yield token_a, company_a_id, token_b, company_b_id
-
-
-def _patched_membership_resolution(get_membership_side_effect):
-    """Patch oidc's membership resolution with a custom get_membership side effect."""
-    from unittest.mock import patch
-
-    mock_db = MagicMock()
-    mock_session = AsyncMock()
-    mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
-    mock_company_repo = AsyncMock()
-    mock_company_repo.get_membership = AsyncMock(side_effect=get_membership_side_effect)
-
-    return (
-        patch("tessera_api.auth.oidc.get_db", mock_db),
-        patch("tessera_api.auth.oidc.SqlCompanyRepository", return_value=mock_company_repo),
-    )
 
 
 @pytest.fixture()
@@ -102,8 +111,8 @@ def admin_in_a_member_in_b():
             joined_at=datetime.now(UTC),
         )
 
-    p_db, p_repo = _patched_membership_resolution(_ms)
-    with p_db, p_repo:
+    db_ctx, repo_ctx = _patched_membership_resolution(_ms)
+    with db_ctx, repo_ctx:
         yield token_a, company_a_id, token_b, company_b_id
 
 
@@ -136,33 +145,14 @@ def legacy_global_admin_setup():
             )
         return None  # no membership in Company B
 
-    p_db, p_repo = _patched_membership_resolution(_ms)
-    with p_db, p_repo:
+    db_ctx, repo_ctx = _patched_membership_resolution(_ms)
+    with db_ctx, repo_ctx:
         yield token_a, company_a_id, company_b_id
 
 
 @pytest.fixture()
 def reproduction_setup():
-    """The spec's literal three-company reproduction (feature 037, SC-002).
-
-    Models the reported leak verbatim:
-      - Company 1 (Gusba Dev) owns spaces A and B.
-      - Company 2 owns space C.
-      - Company 3 owns no spaces.
-      - felipe@gusba.dev is a member of Company 1.
-      - a@2.com is a member of Company 2.
-      - a@3.com is a member of Company 3 and carries the legacy global ``is_admin``.
-
-    Patches membership resolution (via ``_patched_membership_resolution``) so each
-    user is a member of exactly their own company and of no other. Tokens are
-    company-scoped. ``spaces_by_company`` maps each active company id to the spaces
-    a correctly-scoped ``list_by_company`` must return, so a test can wire the
-    router's ``SqlSpaceRepository`` mock to reproduce real visibility.
-
-    Returns a ``SimpleNamespace`` with: ``felipe_token`` / ``a2_token`` /
-    ``a3_token``; ``company1_id`` / ``company2_id`` / ``company3_id``; the Space
-    objects ``space_a`` / ``space_b`` / ``space_c``; and ``spaces_by_company``.
-    """
+    """The spec's literal three-company reproduction (feature 037, SC-002)."""
     from datetime import UTC, datetime
     from types import SimpleNamespace
 
@@ -212,8 +202,8 @@ def reproduction_setup():
             )
         return None
 
-    p_db, p_repo = _patched_membership_resolution(_ms)
-    with p_db, p_repo:
+    db_ctx, repo_ctx = _patched_membership_resolution(_ms)
+    with db_ctx, repo_ctx:
         yield SimpleNamespace(
             felipe_token=felipe_token,
             a2_token=a2_token,
@@ -232,16 +222,9 @@ def reproduction_setup():
 def admin_company_setup():
     """Like ``two_company_setup`` but the caller (Alice) is ADMIN of Company A.
 
-    The mocked ``get_membership`` returns ``CompanyRole.ADMIN`` for the caller in
-    Company A and ``CompanyRole.MEMBER`` in every other company, so handlers gated
-    by ``require_company_admin`` / deriving ``is_company_admin`` see admin authority
-    only while Company A is active. Reused by US1/US2/US4 admin-authority tests.
-
     Returns:
         (token_a, company_a_id, token_b, company_b_id)
     """
-    from unittest.mock import patch
-
     from tessera_api.auth.jwt_auth import create_access_token
     from tessera_core.domain.entities import CompanyMembership, CompanyRole
 
@@ -261,18 +244,15 @@ def admin_company_setup():
             role=role, joined_at=now,
         )
 
-    mock_db = MagicMock()
     mock_session = AsyncMock()
-    mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
     mock_company_repo = AsyncMock()
     mock_company_repo.get_membership = AsyncMock(
         side_effect=lambda uid, cid: _make_membership(uid, cid)
     )
+    mock_company_repo.get_by_id = AsyncMock(return_value=None)
 
     with (
-        patch("tessera_api.auth.oidc.get_db", mock_db),
+        _override_db(mock_session),
         patch("tessera_api.auth.oidc.SqlCompanyRepository", return_value=mock_company_repo),
     ):
         yield token_a, company_a_id, token_b, company_b_id

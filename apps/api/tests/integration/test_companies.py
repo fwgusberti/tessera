@@ -37,6 +37,24 @@ def _bypass_onboarding_guard():
         app.dependency_overrides.pop(require_onboarding_complete, None)
 
 
+@contextmanager
+def _with_db(mock_session=None):
+    from tessera_api.adapters.database import get_db
+    from tessera_api.main import app
+
+    if mock_session is None:
+        mock_session = AsyncMock()
+
+    async def _gen():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = _gen
+    try:
+        yield mock_session
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
 def _make_jwt_header(user_id: uuid.UUID | None = None, email: str = "user@acme.com") -> dict:
     from tessera_api.auth.jwt_auth import create_access_token
 
@@ -58,13 +76,6 @@ def _make_progress(user_id: uuid.UUID) -> OnboardingProgress:
     )
 
 
-def _db_mock(mock_session: AsyncMock):
-    mock_get_db = MagicMock()
-    mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-    return mock_get_db
-
-
 class TestCreateCompany:
     def test_create_company_returns_201(self):
         user_id = uuid.uuid4()
@@ -81,35 +92,29 @@ class TestCreateCompany:
         )
         progress = _make_progress(user_id)
 
-        with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.companies.get_db") as mock_get_db,
-                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_company_cls,
-                patch("tessera_api.routers.companies.SqlOnboardingRepository") as mock_ob_cls,
-                patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
-            ):
-                session = AsyncMock()
-                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_company = AsyncMock()
+        mock_company.create = AsyncMock(return_value=company)
+        mock_company.add_membership = AsyncMock(return_value=membership)
 
-                mock_company = AsyncMock()
-                mock_company.create = AsyncMock(return_value=company)
-                mock_company.add_membership = AsyncMock(return_value=membership)
-                mock_company_cls.return_value = mock_company
+        mock_ob = AsyncMock()
+        mock_ob.advance_step = AsyncMock(return_value=progress)
 
-                mock_ob = AsyncMock()
-                mock_ob.advance_step = AsyncMock(return_value=progress)
-                mock_ob_cls.return_value = mock_ob
+        with (
+            _bypass_onboarding_guard(),
+            _with_db(),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_company),
+            patch("tessera_api.routers.companies.SqlOnboardingRepository", return_value=mock_ob),
+            patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
-
-                with TestClient(app) as client:
-                    response = client.post(
-                        "/v1/companies",
-                        json={"name": "Acme Corp", "industry": "Technology", "team_size": "11-50"},
-                        headers=_make_jwt_header(user_id),
-                    )
+            with TestClient(app) as client:
+                response = client.post(
+                    "/v1/companies",
+                    json={"name": "Acme Corp", "industry": "Technology", "team_size": "11-50"},
+                    headers=_make_jwt_header(user_id),
+                )
 
         assert response.status_code == 201
         body = response.json()
@@ -144,37 +149,28 @@ class TestGetSuggestions:
     def test_returns_empty_when_no_matches(self):
         user_id = uuid.uuid4()
 
-        with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.companies.get_db") as mock_get_db,
-                patch("tessera_api.routers.companies.SqlInvitationRepository") as mock_inv_cls,
-                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_company_cls,
-                patch("tessera_api.routers.companies.SqlDomainPolicyRepository") as mock_domain_cls,
-                patch("tessera_api.routers.companies.SqlUserRepository") as mock_user_cls,
-            ):
-                session = AsyncMock()
-                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_inv = AsyncMock()
+        mock_inv.get_pending_for_email = AsyncMock(return_value=[])
 
-                mock_inv = AsyncMock()
-                mock_inv.get_pending_for_email = AsyncMock(return_value=[])
-                mock_inv_cls.return_value = mock_inv
+        mock_domain = AsyncMock()
+        mock_domain.get_by_domain = AsyncMock(return_value=None)
 
-                mock_domain = AsyncMock()
-                mock_domain.get_by_domain = AsyncMock(return_value=None)
-                mock_domain_cls.return_value = mock_domain
+        with (
+            _bypass_onboarding_guard(),
+            _with_db(),
+            patch("tessera_api.routers.companies.SqlInvitationRepository", return_value=mock_inv),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=AsyncMock()),
+            patch("tessera_api.routers.companies.SqlDomainPolicyRepository", return_value=mock_domain),
+            patch("tessera_api.routers.companies.SqlUserRepository", return_value=AsyncMock()),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                mock_company_cls.return_value = AsyncMock()
-                mock_user_cls.return_value = AsyncMock()
-
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
-
-                with TestClient(app) as client:
-                    response = client.get(
-                        "/v1/companies/suggestions",
-                        headers=_make_jwt_header(user_id),
-                    )
+            with TestClient(app) as client:
+                response = client.get(
+                    "/v1/companies/suggestions",
+                    headers=_make_jwt_header(user_id),
+                )
 
         assert response.status_code == 200
         body = response.json()
@@ -208,42 +204,35 @@ class TestJoinCompany:
         )
         progress = _make_progress(user_id)
 
-        with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.companies.get_db") as mock_get_db,
-                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_company_cls,
-                patch("tessera_api.routers.companies.SqlInvitationRepository") as mock_inv_cls,
-                patch("tessera_api.routers.companies.SqlOnboardingRepository") as mock_ob_cls,
-                patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
-            ):
-                session = AsyncMock()
-                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_company = AsyncMock()
+        mock_company.get_by_id = AsyncMock(return_value=company)
+        mock_company.get_membership = AsyncMock(return_value=None)
+        mock_company.add_membership = AsyncMock(return_value=membership)
 
-                mock_company = AsyncMock()
-                mock_company.get_by_id = AsyncMock(return_value=company)
-                mock_company.get_membership = AsyncMock(return_value=None)
-                mock_company.add_membership = AsyncMock(return_value=membership)
-                mock_company_cls.return_value = mock_company
+        mock_inv = AsyncMock()
+        mock_inv.get_by_id = AsyncMock(return_value=invitation)
+        mock_inv.update_status = AsyncMock(return_value=invitation)
 
-                mock_inv = AsyncMock()
-                mock_inv.get_by_id = AsyncMock(return_value=invitation)
-                mock_inv.update_status = AsyncMock(return_value=invitation)
-                mock_inv_cls.return_value = mock_inv
+        mock_ob = AsyncMock()
+        mock_ob.advance_step = AsyncMock(return_value=progress)
 
-                mock_ob = AsyncMock()
-                mock_ob.advance_step = AsyncMock(return_value=progress)
-                mock_ob_cls.return_value = mock_ob
+        with (
+            _bypass_onboarding_guard(),
+            _with_db(),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_company),
+            patch("tessera_api.routers.companies.SqlInvitationRepository", return_value=mock_inv),
+            patch("tessera_api.routers.companies.SqlOnboardingRepository", return_value=mock_ob),
+            patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
-
-                with TestClient(app) as client:
-                    response = client.post(
-                        f"/v1/companies/{company_id}/join",
-                        json={"method": "invitation", "invitation_id": str(invitation_id)},
-                        headers=_make_jwt_header(user_id),
-                    )
+            with TestClient(app) as client:
+                response = client.post(
+                    f"/v1/companies/{company_id}/join",
+                    json={"method": "invitation", "invitation_id": str(invitation_id)},
+                    headers=_make_jwt_header(user_id),
+                )
 
         assert response.status_code == 200
         body = response.json()
@@ -254,28 +243,23 @@ class TestJoinCompany:
         user_id = uuid.uuid4()
         company_id = uuid.uuid4()
 
-        with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.companies.get_db") as mock_get_db,
-                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_company_cls,
-            ):
-                session = AsyncMock()
-                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_company = AsyncMock()
+        mock_company.get_by_id = AsyncMock(return_value=None)
 
-                mock_company = AsyncMock()
-                mock_company.get_by_id = AsyncMock(return_value=None)
-                mock_company_cls.return_value = mock_company
+        with (
+            _bypass_onboarding_guard(),
+            _with_db(),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_company),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
-
-                with TestClient(app) as client:
-                    response = client.post(
-                        f"/v1/companies/{company_id}/join",
-                        json={"method": "invitation", "invitation_id": str(uuid.uuid4())},
-                        headers=_make_jwt_header(user_id),
-                    )
+            with TestClient(app) as client:
+                response = client.post(
+                    f"/v1/companies/{company_id}/join",
+                    json={"method": "invitation", "invitation_id": str(uuid.uuid4())},
+                    headers=_make_jwt_header(user_id),
+                )
 
         assert response.status_code == 404
 
@@ -295,32 +279,26 @@ class TestJoinStatus:
             status=JoinRequestStatus.PENDING, requested_at=now,
         )
 
-        with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.companies.get_db") as mock_get_db,
-                patch("tessera_api.routers.companies.SqlJoinRequestRepository") as mock_jr_cls,
-                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_company_cls,
-            ):
-                session = AsyncMock()
-                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_company = AsyncMock()
+        mock_company.get_by_id = AsyncMock(return_value=company)
 
-                mock_company = AsyncMock()
-                mock_company.get_by_id = AsyncMock(return_value=company)
-                mock_company_cls.return_value = mock_company
+        mock_jr = AsyncMock()
+        mock_jr.get_by_user_and_company = AsyncMock(return_value=join_req)
 
-                mock_jr = AsyncMock()
-                mock_jr.get_by_user_and_company = AsyncMock(return_value=join_req)
-                mock_jr_cls.return_value = mock_jr
+        with (
+            _bypass_onboarding_guard(),
+            _with_db(),
+            patch("tessera_api.routers.companies.SqlJoinRequestRepository", return_value=mock_jr),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_company),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
-
-                with TestClient(app) as client:
-                    response = client.get(
-                        f"/v1/companies/{company_id}/join-status",
-                        headers=_make_jwt_header(user_id),
-                    )
+            with TestClient(app) as client:
+                response = client.get(
+                    f"/v1/companies/{company_id}/join-status",
+                    headers=_make_jwt_header(user_id),
+                )
 
         assert response.status_code == 200
         assert response.json()["status"] == "pending"
@@ -332,7 +310,6 @@ class TestCORSPreflight:
         from tessera_api.main import app
 
         with TestClient(app) as client:
-            # Allowed origin should get credentials header
             allowed = client.options(
                 "/v1/companies",
                 headers={
@@ -341,7 +318,6 @@ class TestCORSPreflight:
                     "Access-Control-Request-Headers": "content-type,authorization",
                 },
             )
-            # Unauthorized origin must NOT receive access-control-allow-origin
             disallowed = client.options(
                 "/v1/companies",
                 headers={
@@ -366,29 +342,24 @@ class TestCancelJoinRequest:
             status=JoinRequestStatus.PENDING,
         )
 
-        with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.companies.get_db") as mock_get_db,
-                patch("tessera_api.routers.companies.SqlJoinRequestRepository") as mock_jr_cls,
-                patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
-            ):
-                session = AsyncMock()
-                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_jr = AsyncMock()
+        mock_jr.get_by_user_and_company = AsyncMock(return_value=join_req)
+        mock_jr.cancel = AsyncMock(return_value=None)
 
-                mock_jr = AsyncMock()
-                mock_jr.get_by_user_and_company = AsyncMock(return_value=join_req)
-                mock_jr.cancel = AsyncMock(return_value=None)
-                mock_jr_cls.return_value = mock_jr
+        with (
+            _bypass_onboarding_guard(),
+            _with_db(),
+            patch("tessera_api.routers.companies.SqlJoinRequestRepository", return_value=mock_jr),
+            patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
-
-                with TestClient(app) as client:
-                    response = client.delete(
-                        f"/v1/companies/{company_id}/join-request",
-                        headers=_make_jwt_header(user_id),
-                    )
+            with TestClient(app) as client:
+                response = client.delete(
+                    f"/v1/companies/{company_id}/join-request",
+                    headers=_make_jwt_header(user_id),
+                )
 
         assert response.status_code == 204
 
@@ -407,22 +378,17 @@ class TestGetMyCompaniesContract:
             id=uuid.uuid4(), user_id=user_id, company_id=company_id, role=CompanyRole.ADMIN
         )
 
-        with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.companies.get_db") as mock_get_db,
-                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_repo_cls,
-            ):
-                session = AsyncMock()
-                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_repo = AsyncMock()
+        mock_repo.list_memberships_for_user = AsyncMock(return_value=[membership])
+        mock_repo.get_by_id = AsyncMock(return_value=company)
 
-                mock_repo = AsyncMock()
-                mock_repo.list_memberships_for_user = AsyncMock(return_value=[membership])
-                mock_repo.get_by_id = AsyncMock(return_value=company)
-                mock_repo_cls.return_value = mock_repo
-
-                with TestClient(app) as client:
-                    response = client.get("/v1/companies/me", headers=_make_jwt_header(user_id))
+        with (
+            _bypass_onboarding_guard(),
+            _with_db(),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_repo),
+        ):
+            with TestClient(app) as client:
+                response = client.get("/v1/companies/me", headers=_make_jwt_header(user_id))
 
         assert response.status_code == 200
         body = response.json()
@@ -459,28 +425,23 @@ class TestActivateCompany:
             role=CompanyRole.MEMBER, joined_at=now,
         )
 
-        with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.companies.get_db") as mock_get_db,
-                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_repo_cls,
-            ):
-                session = AsyncMock()
-                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_repo = AsyncMock()
+        mock_repo.get_by_id = AsyncMock(return_value=company)
+        mock_repo.get_membership = AsyncMock(return_value=membership)
 
-                mock_repo = AsyncMock()
-                mock_repo.get_by_id = AsyncMock(return_value=company)
-                mock_repo.get_membership = AsyncMock(return_value=membership)
-                mock_repo_cls.return_value = mock_repo
+        with (
+            _bypass_onboarding_guard(),
+            _with_db(),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_repo),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
-
-                with TestClient(app) as client:
-                    response = client.post(
-                        f"/v1/companies/{company_id}/activate",
-                        headers=_make_jwt_header(user_id),
-                    )
+            with TestClient(app) as client:
+                response = client.post(
+                    f"/v1/companies/{company_id}/activate",
+                    headers=_make_jwt_header(user_id),
+                )
 
         assert response.status_code == 200
         body = response.json()
@@ -498,28 +459,23 @@ class TestActivateCompany:
             created_at=now, updated_at=now,
         )
 
-        with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.companies.get_db") as mock_get_db,
-                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_repo_cls,
-            ):
-                session = AsyncMock()
-                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_repo = AsyncMock()
+        mock_repo.get_by_id = AsyncMock(return_value=company)
+        mock_repo.get_membership = AsyncMock(return_value=None)
 
-                mock_repo = AsyncMock()
-                mock_repo.get_by_id = AsyncMock(return_value=company)
-                mock_repo.get_membership = AsyncMock(return_value=None)
-                mock_repo_cls.return_value = mock_repo
+        with (
+            _bypass_onboarding_guard(),
+            _with_db(),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_repo),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
-
-                with TestClient(app) as client:
-                    response = client.post(
-                        f"/v1/companies/{company_id}/activate",
-                        headers=_make_jwt_header(user_id),
-                    )
+            with TestClient(app) as client:
+                response = client.post(
+                    f"/v1/companies/{company_id}/activate",
+                    headers=_make_jwt_header(user_id),
+                )
 
         assert response.status_code == 403
 
@@ -550,25 +506,21 @@ class TestGetMyCompaniesAuth:
             id=uuid.uuid4(), user_id=user_id, company_id=company_id, role=CompanyRole.ADMIN
         )
 
-        with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.companies.get_db") as mock_get_db,
-                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_repo_cls,
-            ):
-                session = AsyncMock()
-                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=session)
-                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-                mock_repo = AsyncMock()
-                mock_repo.list_memberships_for_user = AsyncMock(return_value=[membership])
-                mock_repo.get_by_id = AsyncMock(return_value=company)
-                mock_repo_cls.return_value = mock_repo
+        mock_repo = AsyncMock()
+        mock_repo.list_memberships_for_user = AsyncMock(return_value=[membership])
+        mock_repo.get_by_id = AsyncMock(return_value=company)
 
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
+        with (
+            _bypass_onboarding_guard(),
+            _with_db(),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_repo),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                with TestClient(app) as client:
-                    client.cookies.set("session", session_cookie)
-                    response = client.get("/v1/companies/me", headers=_make_jwt_header(user_id))
+            with TestClient(app) as client:
+                client.cookies.set("session", session_cookie)
+                response = client.get("/v1/companies/me", headers=_make_jwt_header(user_id))
 
         assert response.status_code == 200
 
@@ -587,25 +539,15 @@ class TestGetMyCompaniesAuth:
             updated_at=datetime.now(UTC),
         )
 
-        mock_session_db = AsyncMock()
-        bearer_db = MagicMock()
-        bearer_db.return_value.__aenter__ = AsyncMock(return_value=mock_session_db)
-        bearer_db.return_value.__aexit__ = AsyncMock(return_value=None)
-        bearer_ob_cls = MagicMock()
-        bearer_ob_instance = AsyncMock()
-        bearer_ob_instance.get_by_user_id = AsyncMock(return_value=progress)
-        bearer_ob_cls.return_value = bearer_ob_instance
+        mock_ob_instance = AsyncMock()
+        mock_ob_instance.get_by_user_id = AsyncMock(return_value=progress)
 
-        handler_db = MagicMock()
-        handler_db.return_value.__aenter__ = AsyncMock(return_value=mock_session_db)
-        handler_db.return_value.__aexit__ = AsyncMock(return_value=None)
         handler_repo = AsyncMock()
         handler_repo.list_memberships_for_user = AsyncMock(return_value=[])
 
         with (
-            patch("tessera_api.adapters.database.get_db", bearer_db),
-            patch("tessera_api.adapters.repo.SqlOnboardingRepository", bearer_ob_cls),
-            patch("tessera_api.routers.companies.get_db", handler_db),
+            _with_db(),
+            patch("tessera_api.adapters.repo.SqlOnboardingRepository", return_value=mock_ob_instance),
             patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=handler_repo),
         ):
             from fastapi.testclient import TestClient
@@ -639,7 +581,7 @@ class TestActivateCompanySession:
         data = base64.b64encode(json.dumps(session_data).encode()).decode()
         return signer.sign(data).decode()
 
-    def _make_db_mocks(self, user_id: uuid.UUID, company_id: uuid.UUID, now: datetime):
+    def _make_repo_mock(self, user_id: uuid.UUID, company_id: uuid.UUID, now: datetime):
         company = Company(
             id=company_id, name="Session Test Corp", admin_user_id=user_id,
             created_at=now, updated_at=now,
@@ -648,36 +590,31 @@ class TestActivateCompanySession:
             id=uuid.uuid4(), user_id=user_id, company_id=company_id,
             role=CompanyRole.MEMBER, joined_at=now,
         )
-        mock_session = AsyncMock()
-        mock_get_db = MagicMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
         mock_repo = AsyncMock()
         mock_repo.get_by_id = AsyncMock(return_value=company)
         mock_repo.get_membership = AsyncMock(return_value=membership)
-        mock_repo_cls = MagicMock(return_value=mock_repo)
-        return mock_get_db, mock_repo_cls
+        return mock_repo
 
     def test_jwt_user_activate_stores_complete_identity(self):
         """JWT-only user activating a company gets sub, email, is_admin, and active_company_id in session."""
         user_id = uuid.uuid4()
         company_id = uuid.uuid4()
         now = datetime.now(UTC)
-        mock_get_db, mock_repo_cls = self._make_db_mocks(user_id, company_id, now)
+        mock_repo = self._make_repo_mock(user_id, company_id, now)
 
-        with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.companies.get_db", mock_get_db),
-                patch("tessera_api.routers.companies.SqlCompanyRepository", mock_repo_cls),
-            ):
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
+        with (
+            _bypass_onboarding_guard(),
+            _with_db(),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_repo),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                with TestClient(app) as client:
-                    response = client.post(
-                        f"/v1/companies/{company_id}/activate",
-                        headers=_make_jwt_header(user_id),
-                    )
+            with TestClient(app) as client:
+                response = client.post(
+                    f"/v1/companies/{company_id}/activate",
+                    headers=_make_jwt_header(user_id),
+                )
 
         assert response.status_code == 200
 
@@ -699,7 +636,7 @@ class TestActivateCompanySession:
         user_id = uuid.uuid4()
         company_id = uuid.uuid4()
         now = datetime.now(UTC)
-        mock_get_db, mock_repo_cls = self._make_db_mocks(user_id, company_id, now)
+        mock_repo = self._make_repo_mock(user_id, company_id, now)
 
         existing_session = {
             "user": {
@@ -711,24 +648,23 @@ class TestActivateCompanySession:
         }
         original_cookie = self._encode_session_cookie(existing_session)
 
-        with _bypass_onboarding_guard():
-            with (
-                patch("tessera_api.routers.companies.get_db", mock_get_db),
-                patch("tessera_api.routers.companies.SqlCompanyRepository", mock_repo_cls),
-            ):
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
+        with (
+            _bypass_onboarding_guard(),
+            _with_db(),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_repo),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                with TestClient(app) as client:
-                    client.cookies.set("session", original_cookie)
-                    response = client.post(
-                        f"/v1/companies/{company_id}/activate",
-                        headers=_make_jwt_header(user_id),
-                    )
+            with TestClient(app) as client:
+                client.cookies.set("session", original_cookie)
+                response = client.post(
+                    f"/v1/companies/{company_id}/activate",
+                    headers=_make_jwt_header(user_id),
+                )
 
         assert response.status_code == 200
 
-        # If session was modified, response has a new cookie; otherwise original is preserved
         result_cookie = response.cookies.get("session") or original_cookie
         session_data = self._decode_session_cookie(result_cookie)
         user = session_data.get("user", {})

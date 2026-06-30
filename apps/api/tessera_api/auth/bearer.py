@@ -8,7 +8,9 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from tessera_api.adapters.database import SessionDep, get_db
 from tessera_core.domain.entities import AgentCredential
 
 _bearer_scheme = HTTPBearer(auto_error=False)
@@ -20,20 +22,18 @@ def hash_token(token: str) -> str:
 
 async def get_agent_credential(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
-    request: Request,
+    session: SessionDep,
 ) -> AgentCredential | None:
     if credentials is None:
         return None
-    from tessera_api.adapters.database import get_db
     from tessera_api.adapters.repo import SqlAgentCredentialRepository
 
     token_hash = hash_token(credentials.credentials)
-    async with get_db() as session:
-        repo = SqlAgentCredentialRepository(session)
-        credential = await repo.get_by_token_hash(token_hash)
-        if credential is None or credential.is_revoked:
-            return None
-        return credential
+    repo = SqlAgentCredentialRepository(session)
+    credential = await repo.get_by_token_hash(token_hash)
+    if credential is None or credential.is_revoked:
+        return None
+    return credential
 
 
 async def require_agent(
@@ -47,7 +47,10 @@ async def require_agent(
     return credential
 
 
-async def require_onboarding_complete(request: Request) -> None:
+async def require_onboarding_complete(
+    request: Request,
+    session: SessionDep,
+) -> None:
     """Dependency that blocks access until the authenticated user has finished onboarding.
 
     Routes exempt from this guard (accessible before onboarding completes):
@@ -97,17 +100,15 @@ async def require_onboarding_complete(request: Request) -> None:
 
     user_id = UUID(user_info["sub"])
 
-    from tessera_api.adapters.database import get_db
     from tessera_api.adapters.repo import SqlOnboardingRepository
 
-    async with get_db() as session:
-        repo = SqlOnboardingRepository(session)
-        progress = await repo.get_by_user_id(user_id)
-        if progress is None or progress.completed_at is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "code": "onboarding_required",
-                    "message": "Complete onboarding before accessing this resource.",
-                },
-            )
+    repo = SqlOnboardingRepository(session)
+    progress = await repo.get_by_user_id(user_id)
+    if progress is None or progress.completed_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "onboarding_required",
+                "message": "Complete onboarding before accessing this resource.",
+            },
+        )

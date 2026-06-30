@@ -1,8 +1,7 @@
 """Integration test: access boundary enforcement — company-scoped docs returned."""
 
 import uuid
-from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -24,6 +23,7 @@ class TestAccessBoundary:
         space_a = uuid.uuid4()
         space_b = uuid.uuid4()
         user_id = uuid.uuid4()
+        session = AsyncMock()
 
         doc_a = Document(
             id=uuid.uuid4(),
@@ -42,20 +42,13 @@ class TestAccessBoundary:
         mock_doc_repo = AsyncMock()
         mock_doc_repo.list_by_space_ids_for_company = AsyncMock(return_value=[doc_a])
 
-        @asynccontextmanager
-        async def mock_get_db():
-            yield MagicMock()
+        ctx = ({"sub": str(user_id), "id": str(user_id)}, company_a_id)
 
         with (
-            patch("tessera_api.routers.documents.get_db", mock_get_db),
             patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
             patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
-            patch(
-                "tessera_api.routers.documents.require_company_context",
-                new=AsyncMock(return_value=({"sub": str(user_id), "id": str(user_id)}, company_a_id)),
-            ),
         ):
-            result = await list_documents(space_id=None, state=None, request=MagicMock())
+            result = await list_documents(ctx=ctx, session=session, space_id=None, state=None)
 
         returned_space_ids = {d["space_id"] for d in result["documents"]}
         assert space_b not in returned_space_ids
@@ -71,6 +64,7 @@ class TestAccessBoundary:
         space_a = uuid.uuid4()
         space_b = uuid.uuid4()
         admin_id = uuid.uuid4()
+        session = AsyncMock()
 
         doc_a = Document(
             id=uuid.uuid4(),
@@ -100,20 +94,13 @@ class TestAccessBoundary:
         mock_doc_repo = AsyncMock()
         mock_doc_repo.list_by_space_ids_for_company = AsyncMock(return_value=[doc_a, doc_b])
 
-        @asynccontextmanager
-        async def mock_get_db():
-            yield MagicMock()
+        ctx = ({"sub": str(admin_id), "id": str(admin_id), "is_admin": True}, company_a_id)
 
         with (
-            patch("tessera_api.routers.documents.get_db", mock_get_db),
             patch("tessera_api.routers.documents.SqlDocumentRepository", return_value=mock_doc_repo),
             patch("tessera_api.routers.documents.SqlSpaceRepository", return_value=mock_space_repo),
-            patch(
-                "tessera_api.routers.documents.require_company_context",
-                new=AsyncMock(return_value=({"sub": str(admin_id), "id": str(admin_id), "is_admin": True}, company_a_id)),
-            ),
         ):
-            result = await list_documents(space_id=None, state=None, request=MagicMock())
+            result = await list_documents(ctx=ctx, session=session, space_id=None, state=None)
 
         returned_space_ids = {d["space_id"] for d in result["documents"]}
         assert space_a in returned_space_ids

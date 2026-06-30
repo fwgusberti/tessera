@@ -43,13 +43,27 @@ def _bypass_onboarding_guard():
         app.dependency_overrides.pop(require_onboarding_complete, None)
 
 
-def _mock_db():
-    """Return a patched get_db that yields a no-op async session."""
-    mock_get_db = MagicMock()
-    mock_session = AsyncMock()
-    mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-    return mock_get_db
+@contextmanager
+def _with_custom_session(mock_session=None):
+    """Temporarily override get_db to yield a specific mock_session."""
+    from tessera_api.adapters.database import get_db
+    from tessera_api.main import app as _app
+
+    if mock_session is None:
+        mock_session = AsyncMock()
+
+    async def _gen():
+        yield mock_session
+
+    prev = _app.dependency_overrides.get(get_db)
+    _app.dependency_overrides[get_db] = _gen
+    try:
+        yield mock_session
+    finally:
+        if prev is not None:
+            _app.dependency_overrides[get_db] = prev
+        else:
+            _app.dependency_overrides.pop(get_db, None)
 
 
 # Generic denial body — must be identical for "missing" and "other company" (FR-010/SC-005).
@@ -107,7 +121,6 @@ class TestUS1SpaceIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
                 patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
             ):
                 mock_repo = AsyncMock()
@@ -135,7 +148,6 @@ class TestUS1SpaceIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
                 patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
                 patch("tessera_api.routers.spaces.write_audit", new_callable=AsyncMock),
             ):
@@ -161,7 +173,6 @@ class TestUS1SpaceIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
                 patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
             ):
                 mock_repo = AsyncMock()
@@ -198,7 +209,6 @@ class TestUS2DocumentIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.documents.get_db", _mock_db()),
                 patch("tessera_api.routers.documents.SqlDocumentRepository") as mock_doc_repo_cls,
             ):
                 mock_doc_repo = AsyncMock()
@@ -223,7 +233,6 @@ class TestUS2DocumentIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.documents.get_db", _mock_db()),
                 patch("tessera_api.routers.documents.SqlSpaceRepository") as mock_space_repo_cls,
             ):
                 mock_space_repo = AsyncMock()
@@ -252,7 +261,6 @@ class TestUS2DocumentIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.search.get_db", _mock_db()),
                 patch("tessera_api.routers.search.SqlSpaceRepository") as mock_space_repo_cls,
                 patch("tessera_api.routers.search.OllamaEmbeddingProvider") as mock_embed_cls,
                 patch("tessera_api.routers.search.acl_first_search", new_callable=AsyncMock) as mock_search,
@@ -287,7 +295,6 @@ class TestUS2DocumentIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.assistant.get_db", _mock_db()),
                 patch("tessera_api.routers.assistant.SqlSpaceRepository") as mock_space_repo_cls,
                 patch("tessera_api.routers.assistant.OllamaEmbeddingProvider") as mock_embed_cls,
                 patch("tessera_api.routers.assistant.acl_first_search", new_callable=AsyncMock) as mock_search,
@@ -331,7 +338,6 @@ class TestUS4ContextSwitch:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.companies.get_db", _mock_db()),
                 patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_company_cls,
             ):
                 from tessera_core.domain.entities import Company
@@ -379,20 +385,12 @@ class TestUS4ContextSwitch:
             role=CompanyRole.MEMBER, joined_at=now,
         )
 
-        def _company_db():
-            m = MagicMock()
-            s = AsyncMock()
-            m.return_value.__aenter__ = AsyncMock(return_value=s)
-            m.return_value.__aexit__ = AsyncMock(return_value=None)
-            return m
-
         from fastapi.testclient import TestClient
         from tessera_api.main import app
 
         with _bypass_onboarding_guard():
             # --- Phase 1: Activate Alpha (fresh client — no session bleed) ---
             with (
-                patch("tessera_api.routers.companies.get_db", _company_db()),
                 patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_co_cls,
             ):
                 mock_co = AsyncMock()
@@ -410,7 +408,6 @@ class TestUS4ContextSwitch:
 
             # --- Phase 2: List spaces with Alpha-scoped token (fresh client) ---
             with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
                 patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_sp_cls,
             ):
                 mock_sp = AsyncMock()
@@ -429,7 +426,6 @@ class TestUS4ContextSwitch:
 
             # --- Phase 3: Activate Beta (fresh client) ---
             with (
-                patch("tessera_api.routers.companies.get_db", _company_db()),
                 patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_co_cls,
             ):
                 mock_co = AsyncMock()
@@ -447,7 +443,6 @@ class TestUS4ContextSwitch:
 
             # --- Phase 4: List spaces with Beta-scoped token (fresh client) ---
             with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
                 patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_sp_cls,
             ):
                 mock_sp = AsyncMock()
@@ -476,8 +471,6 @@ class TestUS3MemberIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.members.get_db", _mock_db()),
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
                 patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_space_repo_cls,
                 patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
                 patch("tessera_api.routers.members.SqlSpaceMembershipRepository") as mock_member_repo_cls,
@@ -523,7 +516,6 @@ class TestUS3MemberIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
                 patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
                 patch("tessera_api.auth.oidc.SqlCompanyRepository") as mock_company_repo_cls,
             ):
@@ -557,7 +549,6 @@ class TestUS1ProposalIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.proposals.get_db", _mock_db()),
                 patch("tessera_api.routers.proposals.SqlProposalRepository") as mock_repo_cls,
             ):
                 mock_repo = AsyncMock()
@@ -587,7 +578,6 @@ class TestUS1ProposalIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.proposals.get_db", _mock_db()),
                 patch("tessera_api.routers.proposals.SqlProposalRepository") as mock_repo_cls,
                 patch("tessera_api.routers.proposals.SqlDocumentRepository"),
                 patch(
@@ -623,7 +613,6 @@ class TestUS1ProposalIsolation:
         for _ in range(2):
             with _bypass_onboarding_guard():
                 with (
-                    patch("tessera_api.routers.proposals.get_db", _mock_db()),
                     patch("tessera_api.routers.proposals.SqlProposalRepository") as mock_repo_cls,
                     patch("tessera_api.routers.proposals.SqlDocumentRepository"),
                     patch("tessera_api.routers.proposals.write_audit", new_callable=AsyncMock),
@@ -649,7 +638,6 @@ class TestUS1ProposalIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.proposals.get_db", _mock_db()),
                 patch("tessera_api.routers.proposals.SqlProposalRepository") as mock_repo_cls,
                 patch("tessera_api.routers.proposals.SqlDocumentRepository"),
                 patch("tessera_api.routers.proposals.SqlDocumentVersionRepository"),
@@ -685,7 +673,6 @@ class TestUS1ProposalIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.proposals.get_db", _mock_db()),
                 patch("tessera_api.routers.proposals.SqlProposalRepository") as mock_repo_cls,
                 patch("tessera_api.routers.proposals.SqlDocumentRepository"),
                 patch("tessera_api.routers.proposals.SqlUserRepository"),
@@ -724,7 +711,6 @@ class TestUS2ConnectorIsolation:
 
         with _bypass_onboarding_guard(), _company_admin_membership():
             with (
-                patch("tessera_api.routers.connectors.get_db", _mock_db()),
                 patch("tessera_api.routers.connectors.SqlSpaceRepository") as mock_space_cls,
                 patch("tessera_api.routers.connectors.SqlConnectorRepository") as mock_conn_cls,
                 patch(
@@ -760,7 +746,6 @@ class TestUS2ConnectorIsolation:
 
         with _bypass_onboarding_guard(), _company_admin_membership():
             with (
-                patch("tessera_api.routers.connectors.get_db", _mock_db()),
                 patch("tessera_api.routers.connectors.SqlConnectorRepository") as mock_conn_cls,
                 patch("tessera_api.routers.connectors.sync_connector_task") as mock_task,
                 patch(
@@ -796,7 +781,6 @@ class TestUS3AgentCredentialIsolation:
 
         with _bypass_onboarding_guard(), _company_admin_membership():
             with (
-                patch("tessera_api.routers.agent_credentials.get_db", _mock_db()),
                 patch("tessera_api.routers.agent_credentials.SqlSpaceRepository") as mock_space_cls,
                 patch(
                     "tessera_api.routers.agent_credentials.SqlAgentCredentialRepository"
@@ -834,7 +818,6 @@ class TestUS3AgentCredentialIsolation:
 
         with _bypass_onboarding_guard(), _company_admin_membership():
             with (
-                patch("tessera_api.routers.agent_credentials.get_db", _mock_db()),
                 patch(
                     "tessera_api.routers.agent_credentials.SqlAgentCredentialRepository"
                 ) as mock_cred_cls,
@@ -867,7 +850,6 @@ class TestUS3AgentCredentialIsolation:
 
         with _bypass_onboarding_guard(), _company_admin_membership():
             with (
-                patch("tessera_api.routers.agent_credentials.get_db", _mock_db()),
                 patch("tessera_api.routers.agent_credentials.SqlSpaceRepository") as mock_space_cls,
                 patch(
                     "tessera_api.routers.agent_credentials.SqlAgentCredentialRepository"
@@ -909,7 +891,6 @@ class TestUS4MemberWriteIsolation:
     def _run_member_write(self, method, path, token, json=None):
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.members.get_db", _mock_db()),
                 patch("tessera_api.routers.members.SqlSpaceRepository") as mock_space_cls,
                 patch("tessera_api.routers.members.SqlUserRepository"),
                 patch("tessera_api.routers.members.SqlSpaceMembershipRepository"),
@@ -959,7 +940,6 @@ class TestUS4MemberWriteIsolation:
 
         with _bypass_onboarding_guard(), _company_admin_membership():
             with (
-                patch("tessera_api.routers.spaces.get_db", _mock_db()),
                 patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_space_cls,
                 patch(
                     "tessera_api.routers.spaces.write_audit", new_callable=AsyncMock
@@ -998,20 +978,16 @@ class TestUS5MetricsIsolation:
 
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(side_effect=[res_queries, res_pending])
-        mock_db = MagicMock()
-        mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        with _bypass_onboarding_guard(), _company_admin_membership():
-            with patch("tessera_api.routers.metrics.get_db", mock_db):
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
+        with _bypass_onboarding_guard(), _company_admin_membership(), _with_custom_session(mock_session):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                with TestClient(app) as client:
-                    response = client.get(
-                        "/v1/metrics",
-                        headers={"Authorization": f"Bearer {token_b}"},
-                    )
+            with TestClient(app) as client:
+                response = client.get(
+                    "/v1/metrics",
+                    headers={"Authorization": f"Bearer {token_b}"},
+                )
 
         assert response.status_code == 200
         body = response.json()
@@ -1104,20 +1080,16 @@ class TestUS6PerCompanyAdmin:
         res_pending.scalar.return_value = 1
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(side_effect=[res_queries, res_pending])
-        mock_db = MagicMock()
-        mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        with _bypass_onboarding_guard(), _role_by_company(user_id, company_a_id):
-            with patch("tessera_api.routers.metrics.get_db", mock_db):
-                from fastapi.testclient import TestClient
-                from tessera_api.main import app
+        with _bypass_onboarding_guard(), _role_by_company(user_id, company_a_id), _with_custom_session(mock_session):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
 
-                with TestClient(app) as client:
-                    resp = client.get(
-                        "/v1/metrics",
-                        headers={"Authorization": f"Bearer {token_a}"},
-                    )
+            with TestClient(app) as client:
+                resp = client.get(
+                    "/v1/metrics",
+                    headers={"Authorization": f"Bearer {token_a}"},
+                )
 
         assert resp.status_code == 200
         assert resp.json()["total_queries"] == 3
@@ -1136,7 +1108,6 @@ class TestUS3LegacyAdminListIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.search.get_db", _mock_db()),
                 patch("tessera_api.routers.search.SqlSpaceRepository") as mock_space_cls,
                 patch("tessera_api.routers.search.OllamaEmbeddingProvider") as mock_embed_cls,
                 patch(
@@ -1177,7 +1148,6 @@ class TestUS3LegacyAdminListIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.assistant.get_db", _mock_db()),
                 patch("tessera_api.routers.assistant.SqlSpaceRepository") as mock_space_cls,
                 patch("tessera_api.routers.assistant.OllamaEmbeddingProvider") as mock_embed_cls,
                 patch(
@@ -1226,7 +1196,6 @@ class TestUS3LegacyAdminListIsolation:
 
         with _bypass_onboarding_guard():
             with (
-                patch("tessera_api.routers.documents.get_db", _mock_db()),
                 patch("tessera_api.routers.documents.SqlSpaceRepository") as mock_space_cls,
                 patch("tessera_api.routers.documents.SqlDocumentRepository") as mock_doc_cls,
             ):
