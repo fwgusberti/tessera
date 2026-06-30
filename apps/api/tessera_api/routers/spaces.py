@@ -20,6 +20,8 @@ from tessera_core.domain.entities import (
     Confidentiality,
     RolePermission,
     Space,
+    SpaceMembership,
+    SpaceRole,
     UserRole,
 )
 from tessera_core.services.space_hierarchy import SpaceHierarchyService
@@ -87,6 +89,7 @@ async def create_space(
     body: CreateSpaceRequest, ctx: CompanyContext, session: SessionDep
 ) -> dict:
     user_info, company_id = ctx
+    actor_id = UUID(user_info.get("id") or user_info["sub"])
     space = Space(
         slug=body.slug,
         name=body.name,
@@ -98,6 +101,28 @@ async def create_space(
     )
     repo = SqlSpaceRepository(session)
     created = await repo.create(space)
+
+    # Grant the creator admin access immediately (042) — there is no existing
+    # membership yet to authorize against, so this bypasses MembershipService.invite
+    # the same way create_company grants its creator an admin CompanyMembership directly.
+    membership_repo = SqlSpaceMembershipRepository(session)
+    membership = await membership_repo.add(
+        SpaceMembership(space_id=created.id, user_id=actor_id, role=SpaceRole.ADMIN)
+    )
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=actor_id,
+        action="member_invited",
+        entity_type="space_membership",
+        entity_id=membership.id,
+        metadata={
+            "space_id": str(created.id),
+            "user_id": str(actor_id),
+            "role": SpaceRole.ADMIN.value,
+        },
+    )
+
     return {"space": created.model_dump()}
 
 
