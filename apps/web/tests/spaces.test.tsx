@@ -41,6 +41,7 @@ const space1: Space = {
   slug: "zebra",
   name: "Zebra Space",
   sector: "Tech",
+  parent_space_id: null,
   default_language: "en",
   confidence_threshold: 0.7,
   retention_policy: {},
@@ -51,6 +52,7 @@ const space2: Space = {
   slug: "alpha",
   name: "Alpha Space",
   sector: "Finance",
+  parent_space_id: null,
   default_language: "en",
   confidence_threshold: 0.7,
   retention_policy: {},
@@ -89,8 +91,12 @@ describe("SpacesPage", () => {
 
   it("renders the correct number of space cards", async () => {
     const { default: SpacesPage } = await import("@/app/spaces/page");
+    const apiItems = [
+      { ...space1, effective_role: "admin", is_direct: true },
+      { ...space2, effective_role: "editor", is_direct: false },
+    ];
     mockApi.get.mockImplementation((path: string) => {
-      if (path === "/v1/spaces") return Promise.resolve({ spaces: [space1, space2] });
+      if (path === "/v1/spaces") return Promise.resolve({ spaces: apiItems });
       return Promise.reject(Object.assign(new Error("Not found"), { status: 404 }));
     });
     render(<SpacesPage />);
@@ -100,8 +106,12 @@ describe("SpacesPage", () => {
   it("renders space cards sorted alphabetically by name", async () => {
     const { default: SpacesPage } = await import("@/app/spaces/page");
     // API returns spaces in reverse alphabetical order; page must sort them
+    const apiItems = [
+      { ...space1, effective_role: "admin", is_direct: true },
+      { ...space2, effective_role: "editor", is_direct: false },
+    ];
     mockApi.get.mockImplementation((path: string) => {
-      if (path === "/v1/spaces") return Promise.resolve({ spaces: [space1, space2] });
+      if (path === "/v1/spaces") return Promise.resolve({ spaces: apiItems });
       return Promise.reject(Object.assign(new Error("Not found"), { status: 404 }));
     });
     render(<SpacesPage />);

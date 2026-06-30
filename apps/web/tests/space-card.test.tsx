@@ -9,6 +9,7 @@ const mockSpace: Space = {
   slug: "engineering",
   name: "Engineering",
   sector: "Technology",
+  parent_space_id: null,
   default_language: "en",
   confidence_threshold: 0.7,
   retention_policy: {},

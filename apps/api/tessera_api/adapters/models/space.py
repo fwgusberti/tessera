@@ -37,6 +37,24 @@ class SpaceModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    parent_space_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("spaces.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    children: Mapped[list[SpaceModel]] = relationship(
+        "SpaceModel",
+        foreign_keys=[parent_space_id],
+        back_populates="parent",
+    )
+    parent: Mapped[SpaceModel | None] = relationship(
+        "SpaceModel",
+        foreign_keys=[parent_space_id],
+        back_populates="children",
+        remote_side=[id],
+    )
 
     permissions: Mapped[list[RolePermissionModel]] = relationship(
         "RolePermissionModel", back_populates="space"

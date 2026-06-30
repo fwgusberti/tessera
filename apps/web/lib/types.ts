@@ -17,9 +17,16 @@ export interface Space {
   slug: string;
   name: string;
   sector: string;
+  parent_space_id: string | null;
   default_language: string;
   confidence_threshold: number;
   retention_policy: Record<string, unknown>;
+}
+
+export interface SpaceAccess {
+  space: Space;
+  effective_role: SpaceRole;
+  is_direct: boolean;
 }
 
 export interface Document {

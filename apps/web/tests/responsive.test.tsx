@@ -75,7 +75,7 @@ describe("ProgressStepper – responsive", () => {
 });
 
 describe("AddDocumentModal – responsive", () => {
-  const spaces = [{ id: "s1", name: "Test Space", slug: "test", sector: "Tech", default_language: "pt-BR", confidence_threshold: 0.7, retention_policy: {} }];
+  const spaces = [{ id: "s1", name: "Test Space", slug: "test", sector: "Tech", parent_space_id: null, default_language: "pt-BR", confidence_threshold: 0.7, retention_policy: {} }];
 
   it("Language/Confidentiality grid uses grid-cols-1 sm:grid-cols-2", () => {
     const { container } = render(

@@ -410,8 +410,12 @@ class TestUS4ContextSwitch:
             with (
                 patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_sp_cls,
             ):
+                from tessera_core.domain.space_access import SpaceAccess
+                from tessera_core.domain.space_role import SpaceRole
                 mock_sp = AsyncMock()
-                mock_sp.list_by_company = AsyncMock(return_value=[alpha_space])
+                mock_sp.list_accessible_by_user = AsyncMock(
+                    return_value=[SpaceAccess(space=alpha_space, effective_role=SpaceRole.ADMIN, is_direct=True)]
+                )
                 mock_sp_cls.return_value = mock_sp
 
                 with TestClient(app) as client:
@@ -445,8 +449,12 @@ class TestUS4ContextSwitch:
             with (
                 patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_sp_cls,
             ):
+                from tessera_core.domain.space_access import SpaceAccess
+                from tessera_core.domain.space_role import SpaceRole
                 mock_sp = AsyncMock()
-                mock_sp.list_by_company = AsyncMock(return_value=[beta_space])
+                mock_sp.list_accessible_by_user = AsyncMock(
+                    return_value=[SpaceAccess(space=beta_space, effective_role=SpaceRole.VIEWER, is_direct=True)]
+                )
                 mock_sp_cls.return_value = mock_sp
 
                 with TestClient(app) as client:

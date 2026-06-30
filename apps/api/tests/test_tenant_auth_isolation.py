@@ -141,7 +141,7 @@ class TestFullTokenCrossCompanyIsolation:
             patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_space_repo_cls,
         ):
             mock_space_repo = AsyncMock()
-            mock_space_repo.list_by_company = AsyncMock(return_value=[])
+            mock_space_repo.list_accessible_by_user = AsyncMock(return_value=[])
             mock_space_repo_cls.return_value = mock_space_repo
 
             from fastapi.testclient import TestClient
@@ -154,8 +154,10 @@ class TestFullTokenCrossCompanyIsolation:
                 )
 
         assert response.status_code == 200
-        # Verify query was scoped to company_a_id — list_by_company called with it
-        mock_space_repo.list_by_company.assert_called_once_with(company_a_id)
+        # Verify query was scoped to company_a_id — list_accessible_by_user called with it
+        mock_space_repo.list_accessible_by_user.assert_called_once()
+        _, call_company_id = mock_space_repo.list_accessible_by_user.call_args.args
+        assert call_company_id == company_a_id
 
 
 class TestRevokedMembershipBlocksExistingToken:

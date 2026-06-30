@@ -8,6 +8,10 @@ space are role-based (403), never visibility-based (404).
 
 Per the `project_test_env_baseline` / async-marker memory: API tests use
 ``fastapi.testclient.TestClient`` (sync) and patch router-module symbols.
+
+Updated in feature 041: GET /v1/spaces now returns only user-accessible spaces
+(via list_accessible_by_user) rather than all company spaces. Tests updated to
+mock list_accessible_by_user and return SpaceAccess objects.
 """
 
 from __future__ import annotations
@@ -19,6 +23,8 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from tessera_core.domain.entities import Space
+from tessera_core.domain.space_access import SpaceAccess
+from tessera_core.domain.space_role import SpaceRole
 
 _GENERIC_NOT_FOUND = {"error": {"code": "not_found", "message": "Not found"}}
 _GENERIC_FORBIDDEN = {"error": {"code": "forbidden", "message": "Access denied"}}
@@ -32,6 +38,10 @@ def _make_space(company_id: uuid.UUID) -> Space:
         sector="tech",
         company_id=company_id,
     )
+
+
+def _make_access(space: Space, role: SpaceRole = SpaceRole.ADMIN) -> SpaceAccess:
+    return SpaceAccess(space=space, effective_role=role, is_direct=True)
 
 
 @contextmanager
@@ -63,6 +73,12 @@ class TestUS1OwnCompanyVisibility:
     def test_reproduction_three_users_see_only_their_company_spaces(self, reproduction_setup):
         """SC-002: felipe→{A,B}, a@2→{C}, a@3(global admin)→{} with zero overlap."""
         s = reproduction_setup
+        # Build accessible-space map per company using the new SpaceAccess shape
+        accessible_by_company = {
+            s.company1_id: [_make_access(s.space_a), _make_access(s.space_b)],
+            s.company2_id: [_make_access(s.space_c)],
+            s.company3_id: [],
+        }
         expected = {
             s.felipe_token: {str(s.space_a.id), str(s.space_b.id)},
             s.a2_token: {str(s.space_c.id)},
@@ -75,8 +91,8 @@ class TestUS1OwnCompanyVisibility:
         with _bypass_onboarding_guard():
             with patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls:
                 mock_repo = AsyncMock()
-                mock_repo.list_by_company = AsyncMock(
-                    side_effect=lambda cid: s.spaces_by_company[cid]
+                mock_repo.list_accessible_by_user = AsyncMock(
+                    side_effect=lambda uid, cid: accessible_by_company.get(cid, [])
                 )
                 mock_repo_cls.return_value = mock_repo
 
@@ -100,15 +116,18 @@ class TestUS1OwnCompanyVisibility:
         token_a, company_a_id, token_b, company_b_id = two_company_setup
         a_space = _make_space(company_a_id)
         b_space = _make_space(company_b_id)
-        spaces_by_company = {company_a_id: [a_space], company_b_id: [b_space]}
+        accessible_by_company = {
+            company_a_id: [_make_access(a_space)],
+            company_b_id: [_make_access(b_space)],
+        }
 
         from tessera_api.main import app
 
         with _bypass_onboarding_guard():
             with patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls:
                 mock_repo = AsyncMock()
-                mock_repo.list_by_company = AsyncMock(
-                    side_effect=lambda cid: spaces_by_company.get(cid, [])
+                mock_repo.list_accessible_by_user = AsyncMock(
+                    side_effect=lambda uid, cid: accessible_by_company.get(cid, [])
                 )
                 mock_repo_cls.return_value = mock_repo
 
@@ -119,12 +138,14 @@ class TestUS1OwnCompanyVisibility:
         ids = {sp["id"] for sp in resp.json().get("spaces", [])}
         assert str(a_space.id) in ids
         assert str(b_space.id) not in ids
-        # The everyday path has exactly one query shape — list_by_company(active).
-        mock_repo.list_by_company.assert_awaited_once_with(company_a_id)
+        # The endpoint calls list_accessible_by_user scoped to the active company.
+        mock_repo.list_accessible_by_user.assert_awaited_once()
+        _, call_company_id = mock_repo.list_accessible_by_user.await_args.args
+        assert call_company_id == company_a_id
 
     def test_cross_company_by_id_is_byte_identical_to_absent(self, two_company_setup):
         """SC-005/C-004: a Company B space id and a random id return the same 404 bytes;
-        the Company B probe writes exactly one cross_tenant_denied audit row."""
+        the Company B probe writes at least one cross_tenant_denied audit row."""
         token_a, company_a_id, token_b, company_b_id = two_company_setup
         b_space_id = uuid.uuid4()
         random_id = uuid.uuid4()
@@ -141,6 +162,8 @@ class TestUS1OwnCompanyVisibility:
                     ) as mock_audit,
                 ):
                     mock_repo = AsyncMock()
+                    # User has no accessible spaces — probe_id won't be in accessible set
+                    mock_repo.list_accessible_by_user = AsyncMock(return_value=[])
                     mock_repo.get_by_id_for_company = AsyncMock(return_value=None)
                     mock_repo_cls.return_value = mock_repo
 
@@ -158,7 +181,7 @@ class TestUS1OwnCompanyVisibility:
         import json
 
         assert json.loads(results[0][1]) == _GENERIC_NOT_FOUND
-        # Exactly one cross_tenant_denied for the Company B probe.
+        # Both probes write an audit since space_in_company returns None in both cases.
         assert results[0][2] == 1
 
 
@@ -178,7 +201,9 @@ class TestUS2MembershipAndRole:
         with _bypass_onboarding_guard():
             with patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls:
                 mock_repo = AsyncMock()
-                mock_repo.list_by_company = AsyncMock(return_value=[b_space])
+                mock_repo.list_accessible_by_user = AsyncMock(
+                    return_value=[_make_access(b_space)]
+                )
                 mock_repo_cls.return_value = mock_repo
 
                 with TestClient(app) as client:
@@ -188,7 +213,9 @@ class TestUS2MembershipAndRole:
         ids = {sp["id"] for sp in resp.json().get("spaces", [])}
         # Reachability requires only membership, not any platform-wide status.
         assert str(b_space.id) in ids
-        mock_repo.list_by_company.assert_awaited_once_with(company_b_id)
+        mock_repo.list_accessible_by_user.assert_awaited_once()
+        _, call_company_id = mock_repo.list_accessible_by_user.await_args.args
+        assert call_company_id == company_b_id
 
     def test_authorized_member_management_action_succeeds(self, admin_company_setup):
         """AC2: an admin of Company A manages an own-company space successfully."""
@@ -270,9 +297,7 @@ class TestUS3PlatformStatusNoVisibility:
         with _bypass_onboarding_guard():
             with patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls:
                 mock_repo = AsyncMock()
-                mock_repo.list_by_company = AsyncMock(
-                    side_effect=lambda cid: s.spaces_by_company[cid]
-                )
+                mock_repo.list_accessible_by_user = AsyncMock(return_value=[])
                 mock_repo_cls.return_value = mock_repo
 
                 with TestClient(app) as client:
@@ -282,6 +307,8 @@ class TestUS3PlatformStatusNoVisibility:
 
         assert resp.status_code == 200
         # The legacy global is_admin flag confers no visibility — only company 3's
-        # (empty) space set is resolved.
+        # (empty) accessible space set is resolved.
         assert resp.json().get("spaces", []) == []
-        mock_repo.list_by_company.assert_awaited_once_with(s.company3_id)
+        mock_repo.list_accessible_by_user.assert_awaited_once()
+        _, call_company_id = mock_repo.list_accessible_by_user.await_args.args
+        assert call_company_id == s.company3_id
