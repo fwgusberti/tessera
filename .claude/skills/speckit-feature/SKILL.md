@@ -24,31 +24,19 @@ Execute each step in order. Do NOT proceed to the next step until the current on
 
 Invoke the `speckit-specify` skill, passing the full contents of the **User Input** block above as the argument. Wait for it to complete before continuing.
 
-### Step 2 — Clarify
-
-Invoke the `speckit-clarify` skill with no arguments. This resolves ambiguities in the spec before planning begins — skipping it increases downstream rework risk. Wait for it to complete before continuing.
-
-### Step 3 — Plan
+### Step 2 — Plan
 
 Invoke the `speckit-plan` skill with no arguments. Wait for it to complete before continuing.
 
-### Step 4 — Update Agent Context
+### Step 3 — Update Agent Context
 
 Invoke the `speckit-agent-context-update` skill with no arguments. This refreshes the coding agent context file (e.g. `CLAUDE.md`) so it points at the newly created plan. Wait for it to complete before continuing.
 
-### Step 5 — Tasks
+### Step 4 — Tasks
 
 Invoke the `speckit-tasks` skill with no arguments. Wait for it to complete before continuing.
 
-### Step 6 — Analyze
-
-Invoke the `speckit-analyze` skill with no arguments. Wait for it to complete.
-
-Review the analysis report before proceeding:
-- If **CRITICAL** issues are found, pause and present them to the user. Ask whether to fix them first or proceed anyway. Do NOT advance to Step 7 without explicit user confirmation.
-- If only LOW/MEDIUM issues are found, briefly surface them and proceed automatically.
-
-### Step 7 — Implement
+### Step 5 — Implement
 
 Invoke the `speckit-implement` skill with no arguments. Wait for it to complete.
 
@@ -56,7 +44,6 @@ Invoke the `speckit-implement` skill with no arguments. Wait for it to complete.
 
 When all phases finish, report a brief rollup:
 - Spec path and feature name
-- Number of clarifications integrated
 - Plan phases and key architectural decisions
 - Number of tasks generated and coverage percentage (from the analyze report)
 - Any issues flagged by analyze that were deferred to post-implementation
