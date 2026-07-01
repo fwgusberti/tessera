@@ -58,6 +58,28 @@ const space2: Space = {
   retention_policy: {},
 };
 
+const parentSpace: Space = {
+  id: "p1",
+  slug: "parent",
+  name: "Parent Space",
+  sector: "Tech",
+  parent_space_id: null,
+  default_language: "en",
+  confidence_threshold: 0.7,
+  retention_policy: {},
+};
+
+const childSpace: Space = {
+  id: "c1",
+  slug: "child",
+  name: "Child Space",
+  sector: "Tech",
+  parent_space_id: "p1",
+  default_language: "en",
+  confidence_threshold: 0.7,
+  retention_policy: {},
+};
+
 // --- Setup ---
 
 beforeEach(() => {
@@ -119,6 +141,25 @@ describe("SpacesPage", () => {
       const cards = screen.getAllByRole("article");
       expect(cards[0]).toHaveTextContent("Alpha Space");
       expect(cards[1]).toHaveTextContent("Zebra Space");
+    });
+  });
+
+  it("renders only top-level spaces as folder tiles, never a child space", async () => {
+    const { default: SpacesPage } = await import("@/app/spaces/page");
+    const apiItems = [
+      { ...parentSpace, effective_role: "admin", is_direct: true },
+      { ...childSpace, effective_role: "admin", is_direct: false },
+    ];
+    mockApi.get.mockImplementation((path: string) => {
+      if (path === "/v1/spaces") return Promise.resolve({ spaces: apiItems });
+      return Promise.reject(Object.assign(new Error("Not found"), { status: 404 }));
+    });
+    render(<SpacesPage />);
+    await waitFor(() => {
+      const cards = screen.getAllByRole("article");
+      expect(cards.length).toBe(1);
+      expect(cards[0]).toHaveTextContent("Parent Space");
+      expect(screen.queryByText("Child Space")).not.toBeInTheDocument();
     });
   });
 

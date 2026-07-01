@@ -3,22 +3,10 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { Space, SpaceAccess } from "@/lib/types";
-import { SpaceHierarchyView } from "@/components/spaces/SpaceHierarchyView";
+import { mapSpaceAccesses, topLevelSpaces, type ApiSpaceItem } from "@/lib/spaces";
+import { FolderGrid } from "@/components/spaces/FolderGrid";
 import { SetParentModal } from "@/components/spaces/SetParentModal";
 import { AuthGuard } from "@/lib/auth-guard";
-
-interface ApiSpaceItem {
-  id: string;
-  slug: string;
-  name: string;
-  sector: string;
-  parent_space_id: string | null;
-  default_language: string;
-  confidence_threshold: number;
-  retention_policy: Record<string, unknown>;
-  effective_role: "admin" | "editor" | "viewer";
-  is_direct: boolean;
-}
 
 export default function SpacesPage() {
   const [accesses, setAccesses] = useState<SpaceAccess[]>([]);
@@ -30,21 +18,7 @@ export default function SpacesPage() {
     api
       .get<{ spaces: ApiSpaceItem[] }>("/v1/spaces")
       .then((data) => {
-        const items = data.spaces ?? [];
-        const mapped: SpaceAccess[] = items.map((item) => ({
-          space: {
-            id: item.id,
-            slug: item.slug,
-            name: item.name,
-            sector: item.sector,
-            parent_space_id: item.parent_space_id,
-            default_language: item.default_language,
-            confidence_threshold: item.confidence_threshold,
-            retention_policy: item.retention_policy,
-          },
-          effective_role: item.effective_role,
-          is_direct: item.is_direct,
-        }));
+        const mapped = mapSpaceAccesses(data.spaces ?? []);
         mapped.sort((a, b) => a.space.name.localeCompare(b.space.name));
         setAccesses(mapped);
       })
@@ -54,11 +28,11 @@ export default function SpacesPage() {
 
   function handleSpaceUpdated(updated: Space) {
     setAccesses((prev) =>
-      prev.map((a) =>
-        a.space.id === updated.id ? { ...a, space: updated } : a
-      )
+      prev.map((a) => (a.space.id === updated.id ? { ...a, space: updated } : a))
     );
   }
+
+  const roots = topLevelSpaces(accesses);
 
   return (
     <AuthGuard>
@@ -66,12 +40,14 @@ export default function SpacesPage() {
         <h1 className="text-2xl font-bold text-slate-900">Spaces</h1>
         {loading && <p className="text-sm text-slate-500">Loading spaces…</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
-        {!loading && !error && accesses.length === 0 && (
+        {!loading && !error && roots.length === 0 && (
           <p className="text-sm text-slate-500">No spaces available in your company.</p>
         )}
-        {!loading && !error && accesses.length > 0 && (
-          <SpaceHierarchyView
-            spaces={accesses}
+        {!loading && !error && roots.length > 0 && (
+          <FolderGrid
+            subfolders={roots}
+            allAccesses={accesses}
+            onReparented={handleSpaceUpdated}
             onSetParent={(space) => setManagingSpace(space)}
           />
         )}

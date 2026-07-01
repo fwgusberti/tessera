@@ -29,6 +29,12 @@ export interface SpaceAccess {
   is_direct: boolean;
 }
 
+export interface Ancestor {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 export interface CompanyMemberMatch {
   user_id: string;
   display_name: string;
