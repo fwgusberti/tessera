@@ -336,6 +336,12 @@ async def finish_document_draft(
         },
     )
 
+    if doc.state == DocumentLifecycleState.PUBLISHED:
+        get_celery_app().send_task(
+            "tessera.index_document_version",
+            args=[str(created_version.id), str(document_id), str(doc.space_id)],
+        )
+
     return {"document": updated_doc.model_dump(), "version": created_version.model_dump()}
 
 

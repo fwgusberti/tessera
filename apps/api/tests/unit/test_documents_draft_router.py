@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
+from tessera_core.domain.entities import DocumentLifecycleState
+
 
 @contextmanager
 def _bypass_onboarding():
@@ -65,8 +67,13 @@ def _with_db(mock_session=None):
         app.dependency_overrides.pop(get_db, None)
 
 
-def _build_doc(doc_id: uuid.UUID, space_id: uuid.UUID, version_id: uuid.UUID | None = None):
-    from tessera_core.domain.entities import Confidentiality, Document, DocumentLifecycleState
+def _build_doc(
+    doc_id: uuid.UUID,
+    space_id: uuid.UUID,
+    version_id: uuid.UUID | None = None,
+    state: DocumentLifecycleState = DocumentLifecycleState.INGESTED,
+):
+    from tessera_core.domain.entities import Confidentiality, Document
 
     return Document(
         id=doc_id,
@@ -76,7 +83,7 @@ def _build_doc(doc_id: uuid.UUID, space_id: uuid.UUID, version_id: uuid.UUID | N
         language="en",
         confidentiality=Confidentiality.INTERNAL,
         tags=[],
-        state=DocumentLifecycleState.INGESTED,
+        state=state,
         current_version_id=version_id,
     )
 
@@ -136,6 +143,7 @@ def _patched_router(
     user_repo=None,
     version_repo=None,
     audit=None,
+    celery=None,
 ):
     with (
         patch(
@@ -158,6 +166,7 @@ def _patched_router(
             return_value=version_repo or MagicMock(),
         ),
         patch("tessera_api.routers.documents.write_audit", new=audit or AsyncMock()),
+        patch("tessera_api.routers.documents.get_celery_app", return_value=celery or MagicMock()),
     ):
         yield
 
@@ -449,6 +458,7 @@ class TestFinishDraft:
         mock_user_repo.get_by_id = AsyncMock(return_value=editor)
 
         mock_audit = AsyncMock()
+        mock_celery = MagicMock(send_task=MagicMock())
 
         patches = _patched_router(
             doc_repo=mock_doc_repo,
@@ -457,6 +467,7 @@ class TestFinishDraft:
             user_repo=mock_user_repo,
             version_repo=mock_ver_repo,
             audit=mock_audit,
+            celery=mock_celery,
         )
 
         with (
@@ -476,6 +487,78 @@ class TestFinishDraft:
         assert mock_draft_repo.delete_for_company.called
         assert mock_audit.call_count == 1
         assert mock_audit.call_args.kwargs["action"] == "document_edited"
+        assert not mock_celery.send_task.called
+
+    def test_finish_with_change_on_published_doc_dispatches_reindex(self):
+        from tessera_api.main import app
+        from tessera_core.domain.entities import SpaceRole
+
+        editor_id = uuid.uuid4()
+        space_id = uuid.uuid4()
+        doc_id = uuid.uuid4()
+        current_version_id = uuid.uuid4()
+        new_version_id = uuid.uuid4()
+
+        doc = _build_doc(
+            doc_id, space_id, version_id=current_version_id, state=DocumentLifecycleState.PUBLISHED
+        )
+        current_version = _build_version(current_version_id, doc_id, content_markdown="old content")
+        draft = _build_draft(doc_id, editor_id, content_markdown="new edited content")
+        new_version = _build_version(new_version_id, doc_id, content_markdown="new edited content")
+        editor = _build_user(editor_id)
+        updated_doc = doc.model_copy(update={"current_version_id": new_version_id})
+
+        mock_doc_repo = MagicMock()
+        mock_doc_repo.get_by_id_for_company = AsyncMock(return_value=doc)
+        mock_doc_repo.set_current_version = AsyncMock(return_value=updated_doc)
+
+        mock_membership_repo = MagicMock()
+        mock_membership_repo.list_by_space = AsyncMock(
+            return_value=[_build_membership(space_id, editor_id, SpaceRole.EDITOR)]
+        )
+
+        mock_draft_repo = MagicMock()
+        mock_draft_repo.get_by_document_id_for_company = AsyncMock(return_value=draft)
+        mock_draft_repo.delete_for_company = AsyncMock()
+
+        mock_ver_repo = MagicMock()
+        mock_ver_repo.get_by_id = AsyncMock(return_value=current_version)
+        mock_ver_repo.next_version_number = AsyncMock(return_value=2)
+        mock_ver_repo.create = AsyncMock(return_value=new_version)
+
+        mock_user_repo = MagicMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=editor)
+
+        mock_audit = AsyncMock()
+        mock_celery = MagicMock(send_task=MagicMock())
+
+        patches = _patched_router(
+            doc_repo=mock_doc_repo,
+            membership_repo=mock_membership_repo,
+            draft_repo=mock_draft_repo,
+            user_repo=mock_user_repo,
+            version_repo=mock_ver_repo,
+            audit=mock_audit,
+            celery=mock_celery,
+        )
+
+        with (
+            _bypass_onboarding(),
+            _with_company_context(user_id=str(editor_id)),
+            _with_db(),
+            patches,
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            response = client.post(f"/v1/documents/{doc_id}/draft/finish")
+
+        assert response.status_code == 200, response.text
+        assert mock_celery.send_task.called, "send_task() was not called — reindex not dispatched"
+        assert mock_celery.send_task.call_args[0] == ("tessera.index_document_version",)
+        assert mock_celery.send_task.call_args.kwargs["args"] == [
+            str(new_version_id),
+            str(doc_id),
+            str(space_id),
+        ]
 
     def test_finish_with_no_draft_returns_null_version(self):
         from tessera_api.main import app
@@ -543,7 +626,9 @@ class TestFinishDraft:
         space_id = uuid.uuid4()
         doc_id = uuid.uuid4()
         current_version_id = uuid.uuid4()
-        doc = _build_doc(doc_id, space_id, version_id=current_version_id)
+        doc = _build_doc(
+            doc_id, space_id, version_id=current_version_id, state=DocumentLifecycleState.PUBLISHED
+        )
         current_version = _build_version(
             current_version_id, doc_id, content_markdown="same content"
         )
@@ -571,6 +656,7 @@ class TestFinishDraft:
         mock_user_repo.get_by_id = AsyncMock(return_value=editor)
 
         mock_audit = AsyncMock()
+        mock_celery = MagicMock(send_task=MagicMock())
 
         patches = _patched_router(
             doc_repo=mock_doc_repo,
@@ -579,6 +665,7 @@ class TestFinishDraft:
             user_repo=mock_user_repo,
             version_repo=mock_ver_repo,
             audit=mock_audit,
+            celery=mock_celery,
         )
 
         with (
@@ -595,6 +682,7 @@ class TestFinishDraft:
         assert mock_draft_repo.delete_for_company.called
         assert not mock_ver_repo.create.called
         assert not mock_audit.called
+        assert not mock_celery.send_task.called
 
     def test_finish_as_viewer_returns_403(self):
         from tessera_api.main import app
