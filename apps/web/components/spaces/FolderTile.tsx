@@ -10,9 +10,10 @@ interface FolderTileProps {
   access: SpaceAccess;
   onDropSpace?: (draggedSpaceId: string) => void;
   onSetParent?: () => void;
+  onRename?: () => void;
 }
 
-export function FolderTile({ access, onDropSpace, onSetParent }: FolderTileProps) {
+export function FolderTile({ access, onDropSpace, onSetParent, onRename }: FolderTileProps) {
   const { space, effective_role } = access;
   const isAdmin = effective_role === "admin";
 
@@ -58,6 +59,14 @@ export function FolderTile({ access, onDropSpace, onSetParent }: FolderTileProps
         </a>
         <div className="flex items-center gap-2 flex-shrink-0">
           <RoleBadge role={effective_role} />
+          {isAdmin && onRename && (
+            <button
+              onClick={onRename}
+              className="text-xs text-slate-400 hover:text-indigo-600 underline"
+            >
+              Rename
+            </button>
+          )}
           {isAdmin && onSetParent && (
             <button
               onClick={onSetParent}

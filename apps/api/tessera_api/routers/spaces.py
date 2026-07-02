@@ -51,6 +51,13 @@ def _invalid_parent(reason: str) -> HTTPException:
     )
 
 
+def _invalid_name(reason: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"error": {"code": "invalid_name", "message": reason}},
+    )
+
+
 class CreateSpaceRequest(BaseModel):
     slug: str
     name: str
@@ -70,6 +77,10 @@ class SetParentRequest(BaseModel):
     parent_space_id: UUID
 
 
+class RenameSpaceRequest(BaseModel):
+    name: str
+
+
 def _space_response(space: Space) -> dict:
     return space.model_dump()
 
@@ -85,9 +96,7 @@ def _space_access_response(access_list: list) -> list[dict]:
 
 
 @router.post("/spaces", status_code=status.HTTP_201_CREATED)
-async def create_space(
-    body: CreateSpaceRequest, ctx: CompanyContext, session: SessionDep
-) -> dict:
+async def create_space(body: CreateSpaceRequest, ctx: CompanyContext, session: SessionDep) -> dict:
     user_info, company_id = ctx
     actor_id = UUID(user_info.get("id") or user_info["sub"])
     space = Space(
@@ -153,12 +162,7 @@ async def get_ancestors(space_id: UUID, ctx: CompanyContext, session: SessionDep
         raise _not_found()
 
     ancestors = await repo.get_ancestor_chain(space_id)
-    return {
-        "ancestors": [
-            {"id": str(s.id), "name": s.name, "slug": s.slug}
-            for s in ancestors
-        ]
-    }
+    return {"ancestors": [{"id": str(s.id), "name": s.name, "slug": s.slug} for s in ancestors]}
 
 
 @router.get("/spaces/{space_id}")
@@ -219,9 +223,7 @@ async def set_space_parent(
 
 
 @router.delete("/spaces/{space_id}/parent")
-async def remove_space_parent(
-    space_id: UUID, ctx: CompanyContext, session: SessionDep
-) -> dict:
+async def remove_space_parent(space_id: UUID, ctx: CompanyContext, session: SessionDep) -> dict:
     user_info, company_id = ctx
     user_id = UUID(user_info["sub"])
 
@@ -237,6 +239,55 @@ async def remove_space_parent(
         )
     except PermissionError as exc:
         raise _forbidden() from exc
+
+    return {"space": _space_response(updated)}
+
+
+@router.patch("/spaces/{space_id}/name")
+async def rename_space(
+    space_id: UUID, body: RenameSpaceRequest, ctx: CompanyContext, session: SessionDep
+) -> dict:
+    user_info, company_id = ctx
+    user_id = UUID(user_info["sub"])
+
+    repo = SqlSpaceRepository(session)
+    membership_repo = SqlSpaceMembershipRepository(session)
+    svc = SpaceHierarchyService(repo, membership_repo)
+
+    try:
+        updated = await svc.rename(
+            actor_id=user_id,
+            space_id=space_id,
+            name=body.name,
+            company_id=company_id,
+        )
+    except PermissionError as exc:
+        raise _forbidden() from exc
+    except ValueError as exc:
+        reason = str(exc)
+        if reason == "not_found":
+            await write_audit(
+                session,
+                actor_type="user",
+                actor_id=user_id,
+                action="cross_tenant_denied",
+                entity_type="space",
+                entity_id=space_id,
+                metadata={"company_id": str(company_id)},
+            )
+            await session.commit()
+            raise _not_found() from exc
+        raise _invalid_name(reason) from exc
+
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=user_id,
+        action="space_renamed",
+        entity_type="space",
+        entity_id=space_id,
+        metadata={"new_name": updated.name},
+    )
 
     return {"space": _space_response(updated)}
 

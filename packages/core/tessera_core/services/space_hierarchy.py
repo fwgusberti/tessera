@@ -91,6 +91,36 @@ class SpaceHierarchyService:
         updated = await self._spaces.remove_parent(child_id)
         return updated
 
+    async def rename(
+        self,
+        actor_id: UUID,
+        space_id: UUID,
+        name: str,
+        company_id: UUID,
+    ) -> Space:
+        """Rename a space.
+
+        Validates:
+        - Space exists in company
+        - Actor is ADMIN in space
+        - name is non-empty after trim and <= 255 chars
+        """
+        space = await self._spaces.get_by_id_for_company(space_id, company_id)
+        if space is None:
+            raise ValueError("not_found")
+
+        membership = await self._memberships.get(space_id, actor_id)
+        if membership is None or membership.role != SpaceRole.ADMIN:
+            raise PermissionError("Actor must be admin of space")
+
+        trimmed = name.strip()
+        if not trimmed:
+            raise ValueError("empty_name")
+        if len(trimmed) > 255:
+            raise ValueError("name_too_long")
+
+        return await self._spaces.rename(space_id, trimmed)
+
     async def get_ancestor_path(self, space_id: UUID, company_id: UUID) -> list[Space]:
         """Return ancestor chain for breadcrumb display (no access grant implied)."""
         space = await self._spaces.get_by_id_for_company(space_id, company_id)

@@ -262,9 +262,7 @@ class TestSetParentValidations:
             side_effect=lambda sid, uid: _membership(sid, uid, SpaceRole.ADMIN)
         )
         space_repo.get_by_id_for_company = AsyncMock(
-            side_effect=lambda sid, cid: (
-                child if sid == child.id else proposed_parent
-            )
+            side_effect=lambda sid, cid: (child if sid == child.id else proposed_parent)
         )
         # Ancestor chain of proposed parent has 10 entries → depth would be 11
         space_repo.get_ancestor_chain = AsyncMock(
@@ -363,3 +361,144 @@ class TestSetParentValidations:
                 parent_id=parent.id,
                 company_id=company_id,
             )
+
+
+class TestRenameValidations:
+    @pytest.mark.asyncio
+    async def test_missing_space_raises_value_error(self):
+        """A space that doesn't resolve in the company is not_found."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        space_id = uuid.uuid4()
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=None)
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(ValueError, match="not_found"):
+            await svc.rename(
+                actor_id=user_id,
+                space_id=space_id,
+                name="New Name",
+                company_id=company_id,
+            )
+
+    @pytest.mark.asyncio
+    async def test_missing_admin_raises_permission_error(self):
+        """Actor without admin role in the space is denied."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        space = _space(company_id)
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=space)
+        membership_repo.get = AsyncMock(
+            return_value=_membership(space.id, user_id, SpaceRole.VIEWER)
+        )
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(PermissionError):
+            await svc.rename(
+                actor_id=user_id,
+                space_id=space.id,
+                name="New Name",
+                company_id=company_id,
+            )
+
+    @pytest.mark.asyncio
+    async def test_editor_role_raises_permission_error(self):
+        """Editor (non-admin) role in the space is denied, same as viewer."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        space = _space(company_id)
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=space)
+        membership_repo.get = AsyncMock(
+            return_value=_membership(space.id, user_id, SpaceRole.EDITOR)
+        )
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(PermissionError):
+            await svc.rename(
+                actor_id=user_id,
+                space_id=space.id,
+                name="New Name",
+                company_id=company_id,
+            )
+
+    @pytest.mark.asyncio
+    async def test_empty_name_raises_value_error(self):
+        """Whitespace-only name is rejected."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        space = _space(company_id)
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=space)
+        membership_repo.get = AsyncMock(
+            return_value=_membership(space.id, user_id, SpaceRole.ADMIN)
+        )
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(ValueError, match="empty_name"):
+            await svc.rename(
+                actor_id=user_id,
+                space_id=space.id,
+                name="   ",
+                company_id=company_id,
+            )
+
+    @pytest.mark.asyncio
+    async def test_name_too_long_raises_value_error(self):
+        """Name over 255 chars is rejected."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        space = _space(company_id)
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=space)
+        membership_repo.get = AsyncMock(
+            return_value=_membership(space.id, user_id, SpaceRole.ADMIN)
+        )
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(ValueError, match="name_too_long"):
+            await svc.rename(
+                actor_id=user_id,
+                space_id=space.id,
+                name="x" * 256,
+                company_id=company_id,
+            )
+
+    @pytest.mark.asyncio
+    async def test_admin_can_rename_returns_updated_space(self):
+        """A valid rename by an admin persists via the repository and returns the result."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        space = _space(company_id)
+        renamed = space.model_copy(update={"name": "New Name"})
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=space)
+        membership_repo.get = AsyncMock(
+            return_value=_membership(space.id, user_id, SpaceRole.ADMIN)
+        )
+        space_repo.rename = AsyncMock(return_value=renamed)
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        result = await svc.rename(
+            actor_id=user_id,
+            space_id=space.id,
+            name="New Name",
+            company_id=company_id,
+        )
+
+        space_repo.rename.assert_awaited_once_with(space.id, "New Name")
+        assert result == renamed

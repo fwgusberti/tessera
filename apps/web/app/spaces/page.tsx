@@ -6,6 +6,7 @@ import type { Space, SpaceAccess } from "@/lib/types";
 import { mapSpaceAccesses, topLevelSpaces, type ApiSpaceItem } from "@/lib/spaces";
 import { FolderGrid } from "@/components/spaces/FolderGrid";
 import { SetParentModal } from "@/components/spaces/SetParentModal";
+import { RenameSpaceModal } from "@/components/spaces/RenameSpaceModal";
 import { AuthGuard } from "@/lib/auth-guard";
 
 export default function SpacesPage() {
@@ -13,6 +14,7 @@ export default function SpacesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [managingSpace, setManagingSpace] = useState<Space | null>(null);
+  const [renamingSpace, setRenamingSpace] = useState<Space | null>(null);
 
   useEffect(() => {
     api
@@ -49,6 +51,7 @@ export default function SpacesPage() {
             allAccesses={accesses}
             onReparented={handleSpaceUpdated}
             onSetParent={(space) => setManagingSpace(space)}
+            onRename={(space) => setRenamingSpace(space)}
           />
         )}
         {managingSpace && (
@@ -56,6 +59,13 @@ export default function SpacesPage() {
             space={managingSpace}
             accessibleSpaces={accesses}
             onClose={() => setManagingSpace(null)}
+            onUpdated={handleSpaceUpdated}
+          />
+        )}
+        {renamingSpace && (
+          <RenameSpaceModal
+            space={renamingSpace}
+            onClose={() => setRenamingSpace(null)}
             onUpdated={handleSpaceUpdated}
           />
         )}

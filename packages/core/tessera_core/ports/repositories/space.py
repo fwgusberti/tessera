@@ -44,8 +44,11 @@ class SpaceRepository(ABC):
         ...
 
     @abstractmethod
-    async def list_accessible_by_user(
-        self, user_id: UUID, company_id: UUID
-    ) -> list[SpaceAccess]:
+    async def rename(self, space_id: UUID, name: str) -> Space:
+        """Set name on space_id; returns updated Space."""
+        ...
+
+    @abstractmethod
+    async def list_accessible_by_user(self, user_id: UUID, company_id: UUID) -> list[SpaceAccess]:
         """Returns all spaces the user can access (direct + inherited), scoped to company_id."""
         ...

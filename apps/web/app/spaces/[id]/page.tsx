@@ -9,6 +9,7 @@ import { AuthGuard } from "@/lib/auth-guard";
 import { FolderGrid } from "@/components/spaces/FolderGrid";
 import { SpaceBreadcrumb } from "@/components/spaces/SpaceBreadcrumb";
 import { SetParentModal } from "@/components/spaces/SetParentModal";
+import { RenameSpaceModal } from "@/components/spaces/RenameSpaceModal";
 
 export default function SpaceFolderPage() {
   const params = useParams();
@@ -20,6 +21,7 @@ export default function SpaceFolderPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [managingSpace, setManagingSpace] = useState<Space | null>(null);
+  const [renamingSpace, setRenamingSpace] = useState<Space | null>(null);
 
   useEffect(() => {
     if (!folderId) return;
@@ -72,6 +74,7 @@ export default function SpaceFolderPage() {
                 allAccesses={accesses}
                 onReparented={handleSpaceUpdated}
                 onSetParent={(space) => setManagingSpace(space)}
+                onRename={(space) => setRenamingSpace(space)}
               />
             )}
           </>
@@ -81,6 +84,13 @@ export default function SpaceFolderPage() {
             space={managingSpace}
             accessibleSpaces={accesses}
             onClose={() => setManagingSpace(null)}
+            onUpdated={handleSpaceUpdated}
+          />
+        )}
+        {renamingSpace && (
+          <RenameSpaceModal
+            space={renamingSpace}
+            onClose={() => setRenamingSpace(null)}
             onUpdated={handleSpaceUpdated}
           />
         )}

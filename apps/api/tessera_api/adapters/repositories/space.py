@@ -162,29 +162,31 @@ class SqlSpaceRepository(SpaceRepository):
             .values(parent_space_id=parent_space_id)
         )
         await self._session.flush()
-        result = await self._session.execute(
-            select(SpaceModel).where(SpaceModel.id == space_id)
-        )
+        result = await self._session.execute(select(SpaceModel).where(SpaceModel.id == space_id))
         model = result.scalar_one()
         return _space_from_model(model)
 
     async def remove_parent(self, space_id: UUID) -> Space:
         """Set parent_space_id = NULL; returns updated Space."""
         await self._session.execute(
-            update(SpaceModel)
-            .where(SpaceModel.id == space_id)
-            .values(parent_space_id=None)
+            update(SpaceModel).where(SpaceModel.id == space_id).values(parent_space_id=None)
         )
         await self._session.flush()
-        result = await self._session.execute(
-            select(SpaceModel).where(SpaceModel.id == space_id)
-        )
+        result = await self._session.execute(select(SpaceModel).where(SpaceModel.id == space_id))
         model = result.scalar_one()
         return _space_from_model(model)
 
-    async def list_accessible_by_user(
-        self, user_id: UUID, company_id: UUID
-    ) -> list[SpaceAccess]:
+    async def rename(self, space_id: UUID, name: str) -> Space:
+        """Set name on space_id; returns updated Space."""
+        await self._session.execute(
+            update(SpaceModel).where(SpaceModel.id == space_id).values(name=name)
+        )
+        await self._session.flush()
+        result = await self._session.execute(select(SpaceModel).where(SpaceModel.id == space_id))
+        model = result.scalar_one()
+        return _space_from_model(model)
+
+    async def list_accessible_by_user(self, user_id: UUID, company_id: UUID) -> list[SpaceAccess]:
         """Recursive CTE: direct memberships + all descendant spaces.
 
         Role propagates downward. Both CTE legs scoped to company_id (Principle VI).
