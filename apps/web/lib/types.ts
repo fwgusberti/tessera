@@ -67,6 +67,13 @@ export interface DocumentVersion {
   created_at: string;
 }
 
+export interface DocumentDraft {
+  content_markdown: string;
+  editor_user_id: string;
+  started_at: string;
+  last_autosaved_at: string;
+}
+
 export interface Connector {
   id: string;
   space_id: string;

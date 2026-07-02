@@ -4,6 +4,7 @@ from tessera_api.adapters.repositories.chunk import SqlChunkRepository
 from tessera_api.adapters.repositories.company import SqlCompanyRepository
 from tessera_api.adapters.repositories.connector import SqlConnectorRepository
 from tessera_api.adapters.repositories.document import SqlDocumentRepository
+from tessera_api.adapters.repositories.document_draft import SqlDocumentDraftRepository
 from tessera_api.adapters.repositories.document_version import SqlDocumentVersionRepository
 from tessera_api.adapters.repositories.domain_policy import SqlDomainPolicyRepository
 from tessera_api.adapters.repositories.invitation import SqlInvitationRepository
@@ -24,6 +25,7 @@ __all__ = [
     "SqlCompanyRepository",
     "SqlConnectorRepository",
     "SqlDocumentRepository",
+    "SqlDocumentDraftRepository",
     "SqlDocumentVersionRepository",
     "SqlDomainPolicyRepository",
     "SqlInvitationRepository",

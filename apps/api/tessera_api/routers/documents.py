@@ -14,6 +14,7 @@ from tessera_api.adapters.audit import write_audit
 from tessera_api.adapters.celery import get_celery_app
 from tessera_api.adapters.database import SessionDep
 from tessera_api.adapters.repo import (
+    SqlDocumentDraftRepository,
     SqlDocumentRepository,
     SqlDocumentVersionRepository,
     SqlSpaceMembershipRepository,
@@ -160,9 +161,7 @@ async def create_document(
 
 
 @router.get("/documents/{document_id}")
-async def get_document(
-    document_id: UUID, ctx: CompanyContext, session: SessionDep
-) -> dict:
+async def get_document(document_id: UUID, ctx: CompanyContext, session: SessionDep) -> dict:
     user_info, company_id = ctx
     doc_repo = SqlDocumentRepository(session)
     ver_repo = SqlDocumentVersionRepository(session)
@@ -193,9 +192,7 @@ async def get_document(
 
 
 @router.get("/documents/{document_id}/versions")
-async def list_versions(
-    document_id: UUID, ctx: CompanyContext, session: SessionDep
-) -> dict:
+async def list_versions(document_id: UUID, ctx: CompanyContext, session: SessionDep) -> dict:
     user_info, company_id = ctx
     doc_repo = SqlDocumentRepository(session)
     doc = await doc_repo.get_by_id_for_company(document_id, company_id)
@@ -217,10 +214,133 @@ async def list_versions(
     return {"versions": [v.model_dump() for v in versions]}
 
 
-@router.post("/documents/{document_id}/publish")
-async def publish_document(
-    document_id: UUID, ctx: CompanyContext, session: SessionDep
+class DraftUpsertRequest(BaseModel):
+    content_markdown: str
+
+
+async def _resolve_document_for_draft_write(
+    document_id: UUID, ctx: CompanyMemberContext, session: SessionDep
+) -> tuple[Document, UUID, UUID]:
+    """Resolve the document (404 + audit on cross-tenant miss) and enforce write access (403).
+
+    Returns (document, company_id, caller_user_id). Shared by GET/PUT /draft and
+    POST /draft/finish (T024).
+    """
+    user_info, company_id, caller_membership = ctx
+    company_admin = is_company_admin(caller_membership)
+    user_id_str = user_info.get("id") or user_info.get("sub")
+    caller_id = UUID(user_id_str) if user_id_str else None
+
+    doc_repo = SqlDocumentRepository(session)
+    doc = await doc_repo.get_by_id_for_company(document_id, company_id)
+    if doc is None:
+        actor_id = caller_id or UUID(user_info["sub"])
+        await write_audit(
+            session,
+            actor_type="user",
+            actor_id=actor_id,
+            action="cross_tenant_denied",
+            entity_type="document",
+            entity_id=document_id,
+            metadata={"company_id": str(company_id)},
+        )
+        await session.commit()
+        raise _not_found()
+
+    user_repo = SqlUserRepository(session)
+    actor = await user_repo.get_by_id(caller_id) if caller_id else None
+    if actor is None:
+        with contextlib.suppress(Exception):
+            actor = await user_repo.get_by_subject(user_info.get("sub", ""))
+
+    membership_repo = SqlSpaceMembershipRepository(session)
+    memberships = await membership_repo.list_by_space(doc.space_id)
+    if actor is None or not can_write_document(
+        actor, doc.space_id, memberships, is_company_admin=company_admin
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You must be an Editor or Admin to edit this document",
+        )
+
+    return doc, company_id, caller_id
+
+
+@router.get("/documents/{document_id}/draft")
+async def get_document_draft(
+    document_id: UUID, ctx: CompanyMemberContext, session: SessionDep
 ) -> dict:
+    _, company_id, _ = await _resolve_document_for_draft_write(document_id, ctx, session)
+    draft_repo = SqlDocumentDraftRepository(session)
+    draft = await draft_repo.get_by_document_id_for_company(document_id, company_id)
+    return {"draft": draft.model_dump() if draft else None}
+
+
+@router.put("/documents/{document_id}/draft")
+async def upsert_document_draft(
+    document_id: UUID, body: DraftUpsertRequest, ctx: CompanyMemberContext, session: SessionDep
+) -> dict:
+    _, company_id, caller_id = await _resolve_document_for_draft_write(document_id, ctx, session)
+    draft_repo = SqlDocumentDraftRepository(session)
+    draft = await draft_repo.upsert_for_company(
+        document_id,
+        company_id,
+        editor_user_id=caller_id,
+        content_markdown=body.content_markdown,
+    )
+    return {"draft": draft.model_dump()}
+
+
+@router.post("/documents/{document_id}/draft/finish")
+async def finish_document_draft(
+    document_id: UUID, ctx: CompanyMemberContext, session: SessionDep
+) -> dict:
+    doc, company_id, caller_id = await _resolve_document_for_draft_write(document_id, ctx, session)
+    draft_repo = SqlDocumentDraftRepository(session)
+    ver_repo = SqlDocumentVersionRepository(session)
+
+    draft = await draft_repo.get_by_document_id_for_company(document_id, company_id)
+    if draft is None:
+        return {"version": None}
+
+    current_version = (
+        await ver_repo.get_by_id(doc.current_version_id) if doc.current_version_id else None
+    )
+    if current_version is not None and current_version.content_markdown == draft.content_markdown:
+        await draft_repo.delete_for_company(document_id, company_id)
+        return {"version": None}
+
+    version_number = await ver_repo.next_version_number(document_id)
+    new_version = DocumentVersion(
+        document_id=document_id,
+        version_number=version_number,
+        content_markdown=draft.content_markdown,
+        frontmatter=current_version.frontmatter if current_version else {},
+        author_user_id=draft.editor_user_id,
+    )
+    created_version = await ver_repo.create(new_version)
+    doc_repo = SqlDocumentRepository(session)
+    updated_doc = await doc_repo.set_current_version(document_id, created_version.id)
+    await draft_repo.delete_for_company(document_id, company_id)
+
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=draft.editor_user_id,
+        action="document_edited",
+        entity_type="document",
+        entity_id=document_id,
+        metadata={
+            "version_id": str(created_version.id),
+            "editor_user_id": str(draft.editor_user_id),
+        },
+    )
+
+    return {"document": updated_doc.model_dump(), "version": created_version.model_dump()}
+
+
+@router.post("/documents/{document_id}/publish")
+async def publish_document(document_id: UUID, ctx: CompanyContext, session: SessionDep) -> dict:
     user_info, company_id = ctx
     user_id_str = user_info.get("id") or user_info.get("sub")
     publisher_id = UUID(user_id_str) if user_id_str else None

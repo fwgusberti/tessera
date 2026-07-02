@@ -7,6 +7,7 @@ from tessera_core.domain.company_role import CompanyRole
 from tessera_core.domain.confidentiality import Confidentiality
 from tessera_core.domain.connector import Connector
 from tessera_core.domain.document import Document
+from tessera_core.domain.document_draft import DocumentDraft
 from tessera_core.domain.document_lifecycle_state import DocumentLifecycleState
 from tessera_core.domain.document_version import DocumentVersion
 from tessera_core.domain.domain_join_policy import DomainJoinPolicy
@@ -38,6 +39,7 @@ __all__ = [
     "Confidentiality",
     "Connector",
     "Document",
+    "DocumentDraft",
     "DocumentLifecycleState",
     "DocumentVersion",
     "DomainJoinPolicy",

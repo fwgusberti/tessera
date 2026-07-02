@@ -16,6 +16,8 @@ const STATE_STYLES: Record<string, string> = {
   archived: "bg-slate-100 text-slate-600",
 };
 
+type SpaceRole = "admin" | "editor" | "viewer";
+
 export default function DocumentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [document, setDocument] = useState<Document | null>(null);
@@ -29,6 +31,7 @@ export default function DocumentDetailPage() {
   const [reindexing, setReindexing] = useState(false);
   const [reindexMessage, setReindexMessage] = useState<string | null>(null);
   const [reindexError, setReindexError] = useState<string | null>(null);
+  const [spaceRole, setSpaceRole] = useState<SpaceRole | null>(null);
   const reindexTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { user } = useAuth();
 
@@ -71,6 +74,18 @@ export default function DocumentDetailPage() {
     };
   }, []);
 
+  useEffect(() => {
+    const spaceId = document?.space_id;
+    if (!spaceId) {
+      setSpaceRole(null);
+      return;
+    }
+    api
+      .get<{ membership: { role: SpaceRole } }>(`/v1/spaces/${spaceId}/members/me`)
+      .then((data) => setSpaceRole(data.membership.role))
+      .catch(() => setSpaceRole(null));
+  }, [document?.space_id]);
+
   const handleReindex = async () => {
     if (!document) return;
     if (reindexTimerRef.current) clearTimeout(reindexTimerRef.current);
@@ -108,6 +123,10 @@ export default function DocumentDetailPage() {
     document !== null &&
     document.state === "published" &&
     (user?.id === document.owner_user_id || user?.isAdmin === true);
+
+  const canEditDocument =
+    document !== null &&
+    (spaceRole === "editor" || spaceRole === "admin" || user?.isAdmin === true);
 
   return (
     <AuthGuard>
@@ -152,6 +171,15 @@ export default function DocumentDetailPage() {
                 </div>
               )}
             </div>
+
+            {canEditDocument && (
+              <a
+                href={`/documents/${id}/edit`}
+                className="bg-white text-indigo-600 border border-indigo-200 px-4 py-2 rounded text-sm font-medium hover:bg-indigo-50 transition-colors"
+              >
+                Edit
+              </a>
+            )}
 
             {document.state === "ingested" && (
               <div className="flex flex-col items-end gap-1">
