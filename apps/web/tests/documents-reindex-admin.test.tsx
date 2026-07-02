@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import React from "react";
 
@@ -44,6 +44,15 @@ describe("Document detail page — Reindex button (admin)", () => {
     mockApi.get.mockImplementation((path: string) => {
       if (path === "/v1/documents/d1") return Promise.resolve({ document: publishedDocNotOwnedByAdmin, current_version: mockVersion });
       if (path === "/v1/documents/d1/versions") return Promise.resolve({ versions: [mockVersion] });
+      if (path === "/v1/spaces/s1/ancestors") return Promise.resolve({ ancestors: [] });
+      if (path === "/v1/spaces/s1") {
+        return Promise.resolve({
+          space: {
+            id: "s1", slug: "ops", name: "Ops", sector: "operations",
+            parent_space_id: null, default_language: "en", confidence_threshold: 0.8, retention_policy: {},
+          },
+        });
+      }
       return Promise.resolve({});
     });
   });
@@ -53,5 +62,10 @@ describe("Document detail page — Reindex button (admin)", () => {
     render(<DocumentDetailPage />);
     await waitFor(() => expect(screen.getByText("Admin Test Doc")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: /^reindex$/i })).toBeInTheDocument();
+
+    const nav = screen.getByRole("navigation", { name: /breadcrumb/i });
+    expect(within(nav).getByRole("link", { name: "Root" })).toHaveAttribute("href", "/spaces");
+    expect(within(nav).getByRole("link", { name: "Ops" })).toHaveAttribute("href", "/spaces/s1");
+    expect(within(nav).getByText("Admin Test Doc")).toBeInTheDocument();
   });
 });

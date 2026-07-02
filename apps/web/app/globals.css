@@ -1,8 +1,12 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --tw-prose-links: var(--color-indigo-600);
+  --tw-prose-code: var(--color-indigo-700);
+  --tw-prose-bold: var(--color-indigo-700);
 }
 
 @theme inline {

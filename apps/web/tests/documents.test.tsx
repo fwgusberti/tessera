@@ -31,7 +31,7 @@ const mockDocuments = [
   { id: "d2", space_id: "s1", title: "Architecture Overview", language: "en", confidentiality: "internal", tags: [], state: "published", current_version_id: "v2", owner_user_id: "u1", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" },
 ];
 
-const mockVersion = { id: "v1", document_id: "d1", version_number: 1, content_markdown: "# API Reference\n\nContent here.", frontmatter: {}, approver_user_id: null, approved_at: null, created_from_proposal_id: null, created_at: "2026-01-01T00:00:00Z" };
+const mockVersion = { id: "v1", document_id: "d1", version_number: 1, content_markdown: "Content here.", frontmatter: {}, approver_user_id: null, approved_at: null, created_from_proposal_id: null, created_at: "2026-01-01T00:00:00Z" };
 const mockVersions = [mockVersion];
 
 describe("Document browser page", () => {
@@ -113,7 +113,7 @@ describe("Document detail page", () => {
 
     expect(screen.getByText(/ingested/i)).toBeInTheDocument();
     expect(screen.getByText(/Content here/)).toBeInTheDocument();
-    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.getByText("Version 1")).toBeInTheDocument();
   });
 
   it("shows Publish button only for ingested documents", async () => {
