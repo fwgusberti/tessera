@@ -94,7 +94,7 @@ describe("Document browser page", () => {
 describe("Document detail page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mock("next/navigation", () => ({ useParams: () => ({ id: "d1" }) }));
+    vi.mock("next/navigation", () => ({ useParams: () => ({ id: "d1" }), useRouter: () => ({ push: vi.fn() }) }));
   });
 
   it("renders document metadata, content, and version history", async () => {

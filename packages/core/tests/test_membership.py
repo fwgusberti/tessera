@@ -7,8 +7,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tessera_core.domain.entities import AuditRecord, SpaceMembership, SpaceRole, User
+from tessera_core.domain.entities import AuditRecord, Document, SpaceMembership, SpaceRole, User
 from tessera_core.permissions.access import (
+    can_delete_document,
     can_manage_members,
     can_read_space_document,
     can_write_document,
@@ -190,6 +191,61 @@ class TestCanReadSpaceDocument:
         space_id = uuid.uuid4()
         user = _user(is_admin=True)
         assert can_read_space_document(user, space_id, []) is False
+
+
+# ---------------------------------------------------------------------------
+# can_delete_document
+# ---------------------------------------------------------------------------
+
+
+def _document(space_id: uuid.UUID, owner_user_id: uuid.UUID) -> Document:
+    return Document(space_id=space_id, title="Test Doc", owner_user_id=owner_user_id)
+
+
+class TestCanDeleteDocument:
+    def test_owner_can_delete(self):
+        space_id = uuid.uuid4()
+        user = _user()
+        document = _document(space_id, user.id)
+        assert can_delete_document(user, document, []) is True
+
+    def test_non_owner_editor_cannot_delete(self):
+        space_id = uuid.uuid4()
+        user = _user()
+        owner = _user()
+        document = _document(space_id, owner.id)
+        memberships = [_membership(space_id, user.id, SpaceRole.EDITOR)]
+        assert can_delete_document(user, document, memberships) is False
+
+    def test_non_owner_viewer_cannot_delete(self):
+        space_id = uuid.uuid4()
+        user = _user()
+        owner = _user()
+        document = _document(space_id, owner.id)
+        memberships = [_membership(space_id, user.id, SpaceRole.VIEWER)]
+        assert can_delete_document(user, document, memberships) is False
+
+    def test_non_member_non_owner_cannot_delete(self):
+        space_id = uuid.uuid4()
+        user = _user()
+        owner = _user()
+        document = _document(space_id, owner.id)
+        assert can_delete_document(user, document, []) is False
+
+    def test_space_admin_non_owner_can_delete(self):
+        space_id = uuid.uuid4()
+        user = _user()
+        owner = _user()
+        document = _document(space_id, owner.id)
+        memberships = [_membership(space_id, user.id, SpaceRole.ADMIN)]
+        assert can_delete_document(user, document, memberships) is True
+
+    def test_company_admin_non_owner_can_delete(self):
+        space_id = uuid.uuid4()
+        user = _user()
+        owner = _user()
+        document = _document(space_id, owner.id)
+        assert can_delete_document(user, document, [], is_company_admin=True) is True
 
 
 # ---------------------------------------------------------------------------

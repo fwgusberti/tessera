@@ -32,7 +32,7 @@ from tessera_core.domain.entities import (
     DocumentLifecycleState,
     DocumentVersion,
 )
-from tessera_core.permissions.access import can_write_document
+from tessera_core.permissions.access import can_delete_document, can_write_document
 from tessera_core.services.lifecycle import assign_owner
 from tessera_core.services.lifecycle import publish_document as lifecycle_publish
 
@@ -449,3 +449,58 @@ async def reindex_document(
     )
 
     return {"queued": True, "document_id": str(document_id)}
+
+
+@router.delete("/documents/{document_id}")
+async def delete_document(
+    document_id: UUID, ctx: CompanyMemberContext, session: SessionDep
+) -> dict:
+    user_info, company_id, caller_membership = ctx
+    company_admin = is_company_admin(caller_membership)
+    user_id_str = user_info.get("id") or user_info.get("sub")
+    caller_id = UUID(user_id_str) if user_id_str else None
+
+    doc_repo = SqlDocumentRepository(session)
+    doc = await doc_repo.get_by_id_for_company(document_id, company_id)
+    if doc is None:
+        actor_id = caller_id or UUID(user_info["sub"])
+        await write_audit(
+            session,
+            actor_type="user",
+            actor_id=actor_id,
+            action="cross_tenant_denied",
+            entity_type="document",
+            entity_id=document_id,
+            metadata={"company_id": str(company_id)},
+        )
+        await session.commit()
+        raise _not_found()
+
+    user_repo = SqlUserRepository(session)
+    actor = await user_repo.get_by_id(caller_id) if caller_id else None
+    if actor is None:
+        with contextlib.suppress(Exception):
+            actor = await user_repo.get_by_subject(user_info.get("sub", ""))
+
+    membership_repo = SqlSpaceMembershipRepository(session)
+    memberships = await membership_repo.list_by_space(doc.space_id)
+    if actor is None or not can_delete_document(
+        actor, doc, memberships, is_company_admin=company_admin
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You must be the document owner or a space admin to delete this document",
+        )
+
+    await doc_repo.delete(document_id)
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=actor.id,
+        action="document_deleted",
+        entity_type="document",
+        entity_id=document_id,
+        metadata={"space_id": str(doc.space_id), "title": doc.title},
+    )
+
+    return {"deleted": True, "document_id": str(document_id)}

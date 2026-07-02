@@ -22,7 +22,7 @@ vi.mock("@/lib/auth-guard", () => ({
   AuthGuard: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-vi.mock("next/navigation", () => ({ useParams: () => ({ id: "d1" }) }));
+vi.mock("next/navigation", () => ({ useParams: () => ({ id: "d1" }), useRouter: () => ({ push: vi.fn() }) }));
 
 import { api } from "@/lib/api";
 

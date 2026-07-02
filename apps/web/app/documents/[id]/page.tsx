@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import type { Ancestor, Document, DocumentVersion, Space } from "@/lib/types";
 import { AuthGuard } from "@/lib/auth-guard";
@@ -20,6 +20,7 @@ type SpaceRole = "admin" | "editor" | "viewer";
 
 export default function DocumentDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [document, setDocument] = useState<Document | null>(null);
   const [currentVersion, setCurrentVersion] = useState<DocumentVersion | null>(null);
   const [versions, setVersions] = useState<DocumentVersion[]>([]);
@@ -32,6 +33,8 @@ export default function DocumentDetailPage() {
   const [reindexMessage, setReindexMessage] = useState<string | null>(null);
   const [reindexError, setReindexError] = useState<string | null>(null);
   const [spaceRole, setSpaceRole] = useState<SpaceRole | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const reindexTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { user } = useAuth();
 
@@ -119,6 +122,20 @@ export default function DocumentDetailPage() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!document) return;
+    if (!confirm("Delete this document? This cannot be undone.")) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.delete(`/v1/documents/${id}`);
+      router.push(`/spaces/${document.space_id}`);
+    } catch (err: unknown) {
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete document");
+      setDeleting(false);
+    }
+  };
+
   const canReindex =
     document !== null &&
     document.state === "published" &&
@@ -127,6 +144,10 @@ export default function DocumentDetailPage() {
   const canEditDocument =
     document !== null &&
     (spaceRole === "editor" || spaceRole === "admin" || user?.isAdmin === true);
+
+  const canDeleteDocument =
+    document !== null &&
+    (document.owner_user_id === user?.id || spaceRole === "admin" || user?.isAdmin === true);
 
   return (
     <AuthGuard>
@@ -179,6 +200,23 @@ export default function DocumentDetailPage() {
               >
                 Edit
               </a>
+            )}
+
+            {canDeleteDocument && (
+              <div className="flex flex-col items-end gap-1">
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="bg-white text-red-600 border border-red-200 px-4 py-2 rounded text-sm font-medium hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {deleting ? "Deleting…" : "Delete"}
+                </button>
+                {deleteError && (
+                  <p role="alert" className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+                    {deleteError}
+                  </p>
+                )}
+              </div>
             )}
 
             {document.state === "ingested" && (

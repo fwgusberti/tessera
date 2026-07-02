@@ -195,3 +195,18 @@ def can_read_space_document(
     if is_company_admin:
         return True
     return get_space_membership_role(user.id, space_id, memberships) is not None
+
+
+def can_delete_document(
+    user: User,
+    document: Document,
+    memberships: list[SpaceMembership],
+    is_company_admin: bool = False,
+) -> bool:
+    """True if the user owns the document, or has effective ADMIN role in its space."""
+    if document.owner_user_id == user.id:
+        return True
+    return (
+        effective_space_role(user, document.space_id, memberships, is_company_admin)
+        == SpaceRole.ADMIN
+    )

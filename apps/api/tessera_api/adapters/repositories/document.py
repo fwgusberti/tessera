@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tessera_api.adapters.models.document import DocumentModel
@@ -135,3 +135,6 @@ class SqlDocumentRepository(DocumentRepository):
         doc = await self.get_by_id(document_id)
         assert doc is not None
         return doc
+
+    async def delete(self, document_id: UUID) -> None:
+        await self._session.execute(delete(DocumentModel).where(DocumentModel.id == document_id))

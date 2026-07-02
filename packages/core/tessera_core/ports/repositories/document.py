@@ -45,3 +45,6 @@ class DocumentRepository(ABC):
 
     @abstractmethod
     async def set_owner(self, document_id: UUID, user_id: UUID) -> Document: ...
+
+    @abstractmethod
+    async def delete(self, document_id: UUID) -> None: ...
