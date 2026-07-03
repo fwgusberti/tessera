@@ -17,6 +17,7 @@ from tessera_api.routers import (
     auth,
     companies,
     connectors,
+    document_assist,
     documents,
     invitations,
     members,
@@ -78,6 +79,7 @@ def create_app() -> FastAPI:
     app.include_router(invitations.router, prefix="/v1", dependencies=_onboarding_guard)
     app.include_router(spaces.router, prefix="/v1", dependencies=_onboarding_guard)
     app.include_router(documents.router, prefix="/v1", dependencies=_onboarding_guard)
+    app.include_router(document_assist.router, prefix="/v1", dependencies=_onboarding_guard)
     app.include_router(search.router, prefix="/v1", dependencies=_onboarding_guard)
     app.include_router(assistant.router, prefix="/v1", dependencies=_onboarding_guard)
     app.include_router(proposals.router, prefix="/v1", dependencies=_onboarding_guard)

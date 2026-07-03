@@ -78,7 +78,7 @@ describe("Document edit page — split view", () => {
     const { default: DocumentEditPage } = await import("@/app/documents/[id]/edit/page");
     render(<DocumentEditPage />);
 
-    const textarea = await screen.findByRole("textbox");
+    const textarea = await screen.findByRole("textbox", { name: /markdown source/i });
     expect((textarea as HTMLTextAreaElement).value).toBe(mockVersion.content_markdown);
     expect(screen.getByRole("heading", { name: "Doc" })).toBeInTheDocument();
   });
@@ -88,7 +88,7 @@ describe("Document edit page — split view", () => {
     const { default: DocumentEditPage } = await import("@/app/documents/[id]/edit/page");
     render(<DocumentEditPage />);
 
-    const textarea = await screen.findByRole("textbox");
+    const textarea = await screen.findByRole("textbox", { name: /markdown source/i });
     fireEvent.change(textarea, { target: { value: "## New Heading\n\nUpdated." } });
 
     expect(screen.getByRole("heading", { name: "New Heading" })).toBeInTheDocument();
@@ -100,7 +100,7 @@ describe("Document edit page — split view", () => {
     const { default: DocumentEditPage } = await import("@/app/documents/[id]/edit/page");
     render(<DocumentEditPage />);
 
-    const textarea = await screen.findByRole("textbox");
+    const textarea = await screen.findByRole("textbox", { name: /markdown source/i });
     const gfmContent = [
       "| A | B |",
       "| - | - |",
@@ -155,7 +155,7 @@ describe("Document edit page — autosave", () => {
     const { default: DocumentEditPage } = await import("@/app/documents/[id]/edit/page");
     render(<DocumentEditPage />);
 
-    const textarea = await screen.findByRole("textbox");
+    const textarea = await screen.findByRole("textbox", { name: /markdown source/i });
 
     vi.useFakeTimers();
     fireEvent.change(textarea, { target: { value: "edited content" } });
@@ -192,7 +192,7 @@ describe("Document edit page — autosave", () => {
     const { default: DocumentEditPage } = await import("@/app/documents/[id]/edit/page");
     render(<DocumentEditPage />);
 
-    const textarea = await screen.findByRole("textbox");
+    const textarea = await screen.findByRole("textbox", { name: /markdown source/i });
     await waitFor(() => expect((textarea as HTMLTextAreaElement).value).toBe("resumed draft content"));
   });
 
@@ -202,7 +202,7 @@ describe("Document edit page — autosave", () => {
     const { default: DocumentEditPage } = await import("@/app/documents/[id]/edit/page");
     render(<DocumentEditPage />);
 
-    const textarea = await screen.findByRole("textbox");
+    const textarea = await screen.findByRole("textbox", { name: /markdown source/i });
     vi.useFakeTimers();
     fireEvent.change(textarea, { target: { value: "content that fails to save" } });
 
@@ -229,7 +229,7 @@ describe("Document edit page — session finalization", () => {
     const { default: DocumentEditPage } = await import("@/app/documents/[id]/edit/page");
     render(<DocumentEditPage />);
 
-    await screen.findByRole("textbox");
+    await screen.findByRole("textbox", { name: /markdown source/i });
     fireEvent.click(screen.getByRole("button", { name: /done editing/i }));
 
     await waitFor(() => expect(mockApi.post).toHaveBeenCalledWith("/v1/documents/d1/draft/finish", {}));
@@ -245,7 +245,7 @@ describe("Document edit page — session finalization", () => {
     const { default: DocumentEditPage } = await import("@/app/documents/[id]/edit/page");
     render(<DocumentEditPage />);
 
-    const textarea = await screen.findByRole("textbox");
+    const textarea = await screen.findByRole("textbox", { name: /markdown source/i });
     fireEvent.change(textarea, { target: { value: "last-second edit" } });
     // click "Done editing" immediately — well within the autosave debounce window
     fireEvent.click(screen.getByRole("button", { name: /done editing/i }));
@@ -264,7 +264,7 @@ describe("Document edit page — session finalization", () => {
     const { default: DocumentEditPage } = await import("@/app/documents/[id]/edit/page");
     render(<DocumentEditPage />);
 
-    const textarea = await screen.findByRole("textbox");
+    const textarea = await screen.findByRole("textbox", { name: /markdown source/i });
     fireEvent.change(textarea, { target: { value: "unsaved edit" } });
 
     act(() => {
@@ -287,7 +287,7 @@ describe("Document edit page — session finalization", () => {
     const { default: DocumentEditPage } = await import("@/app/documents/[id]/edit/page");
     render(<DocumentEditPage />);
 
-    const textarea = await screen.findByRole("textbox");
+    const textarea = await screen.findByRole("textbox", { name: /markdown source/i });
     vi.useFakeTimers();
     fireEvent.change(textarea, { target: { value: "typing" } });
 

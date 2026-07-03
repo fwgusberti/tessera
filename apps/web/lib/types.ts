@@ -163,3 +163,25 @@ export interface ChatTurn {
   status: "pending" | "complete" | "error";
   errorMessage?: string;
 }
+
+// ─── AI Document Assistance ────────────────────────────────────────────────────
+
+export interface DraftAssistRequest {
+  space_id: string;
+  prompt: string;
+  previous_suggestion?: string;
+}
+
+export interface DraftAssistResponse {
+  content_markdown: string;
+}
+
+export interface RevisionAssistRequest {
+  content: string;
+  instruction: string;
+  previous_suggestion?: string;
+}
+
+export interface RevisionAssistResponse {
+  suggestion: string;
+}

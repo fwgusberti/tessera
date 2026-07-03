@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { reviseContent } from "@/lib/documentAssist";
 import type { Document, DocumentDraft, DocumentVersion } from "@/lib/types";
 import { AuthGuard } from "@/lib/auth-guard";
 import { useAuth } from "@/lib/auth";
 import { DocumentContent } from "@/components/documents/DocumentContent";
+import { AiSuggestionPanel } from "@/components/documents/AiSuggestionPanel";
 
 type SpaceRole = "admin" | "editor" | "viewer";
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -26,7 +28,13 @@ export default function DocumentEditPage() {
   const [error, setError] = useState<string | null>(null);
   const [canEdit, setCanEdit] = useState<boolean | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [aiInstruction, setAiInstruction] = useState("");
+  const [aiStatus, setAiStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
+  const [aiRange, setAiRange] = useState<{ start: number; end: number } | null>(null);
   const contentRef = useRef(content);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maxWaitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -165,6 +173,59 @@ export default function DocumentEditPage() {
     }, INACTIVITY_TIMEOUT_MS);
   };
 
+  const handleRequestRevision = async () => {
+    const textarea = textareaRef.current;
+    let start = 0;
+    let end = content.length;
+    if (textarea && textarea.selectionStart !== textarea.selectionEnd) {
+      start = textarea.selectionStart;
+      end = textarea.selectionEnd;
+    }
+    const target = content.slice(start, end);
+    setAiRange({ start, end });
+    setAiStatus("loading");
+    setAiError(null);
+    try {
+      const result = await reviseContent(id, target, aiInstruction);
+      setAiSuggestion(result.suggestion);
+      setAiStatus("idle");
+    } catch (err) {
+      setAiStatus("error");
+      setAiError(err instanceof Error ? err.message : "Failed to generate revision");
+    }
+  };
+
+  const handleAcceptSuggestion = () => {
+    if (aiSuggestion === null || aiRange === null) return;
+    const newContent = content.slice(0, aiRange.start) + aiSuggestion + content.slice(aiRange.end);
+    handleContentChange(newContent);
+    setAiSuggestion(null);
+    setAiRange(null);
+    setAiInstruction("");
+  };
+
+  const handleDiscardSuggestion = () => {
+    setAiSuggestion(null);
+    setAiRange(null);
+    setAiStatus("idle");
+    setAiError(null);
+  };
+
+  const handleRefineSuggestion = async (instruction: string) => {
+    if (aiSuggestion === null || aiRange === null) return;
+    const target = content.slice(aiRange.start, aiRange.end);
+    setAiStatus("loading");
+    setAiError(null);
+    try {
+      const result = await reviseContent(id, target, instruction, aiSuggestion);
+      setAiSuggestion(result.suggestion);
+      setAiStatus("idle");
+    } catch (err) {
+      setAiStatus("error");
+      setAiError(err instanceof Error ? err.message : "Failed to refine suggestion");
+    }
+  };
+
   const saveStatusLabel =
     saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved" : saveStatus === "error" ? "Save failed" : null;
 
@@ -202,6 +263,40 @@ export default function DocumentEditPage() {
               </button>
             </div>
           </div>
+
+          <div className="bg-indigo-50 border border-indigo-200 rounded p-3 space-y-2">
+            <label htmlFor="ai-instruction" className="block text-sm font-medium text-slate-700">
+              AI Instruction
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="ai-instruction"
+                type="text"
+                value={aiInstruction}
+                onChange={(e) => setAiInstruction(e.target.value)}
+                className="flex-1 border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder="e.g. make this more concise"
+              />
+              <button
+                type="button"
+                onClick={handleRequestRevision}
+                disabled={aiStatus === "loading"}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700 disabled:opacity-50 whitespace-nowrap"
+              >
+                {aiStatus === "loading" ? "Revising…" : "Ask AI to revise"}
+              </button>
+            </div>
+          </div>
+
+          <AiSuggestionPanel
+            suggestion={aiSuggestion}
+            status={aiStatus}
+            errorMessage={aiError ?? undefined}
+            onAccept={handleAcceptSuggestion}
+            onDiscard={handleDiscardSuggestion}
+            onRefine={handleRefineSuggestion}
+          />
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-white rounded border p-4">
               <div className="flex items-center justify-between mb-2">
@@ -222,6 +317,8 @@ export default function DocumentEditPage() {
                 )}
               </div>
               <textarea
+                ref={textareaRef}
+                aria-label="Markdown source"
                 value={content}
                 onChange={(e) => handleContentChange(e.target.value)}
                 className="w-full h-[60vh] font-mono text-sm border border-slate-200 rounded p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
