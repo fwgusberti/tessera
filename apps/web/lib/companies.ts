@@ -99,3 +99,15 @@ export async function getMyCompanies(): Promise<CompanyEntry[]> {
   const res = await api.get<CompanyMeResponse>("/v1/companies/me");
   return res.companies;
 }
+
+export interface CompanyMember {
+  user_id: string;
+  display_name: string;
+  email: string;
+  role: "admin" | "member";
+}
+
+export async function getCompanyMembers(): Promise<CompanyMember[]> {
+  const res = await api.get<{ members: CompanyMember[] }>("/v1/companies/members");
+  return res.members;
+}

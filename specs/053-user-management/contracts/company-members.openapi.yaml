@@ -1,0 +1,101 @@
+openapi: 3.1.0
+info:
+  title: Tessera — Company User Management
+  version: "1.0.0"
+  description: >
+    Read-only endpoint backing the company User Management page (feature 053).
+    Lists the members and company roles of the caller's active company.
+
+paths:
+  /v1/companies/members:
+    get:
+      operationId: listCompanyMembers
+      tags: [companies]
+      summary: List the members of the caller's active company (admin only)
+      description: >
+        Returns every member of the caller's **active** company together with each
+        member's company role. The company is resolved from the authenticated,
+        full-scoped credential (JWT claim or session `active_company_id`) — it is
+        never supplied by the client. Requires the caller to be an administrator of
+        that active company.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The active company's member roster.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [members]
+                properties:
+                  members:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CompanyMember"
+              examples:
+                mixed_roster:
+                  value:
+                    members:
+                      - user_id: "6f1c2e0a-1111-4a2b-9c3d-000000000001"
+                        display_name: "Ada Lovelace"
+                        email: "ada@acme.example"
+                        role: "admin"
+                      - user_id: "6f1c2e0a-1111-4a2b-9c3d-000000000002"
+                        display_name: "Grace Hopper"
+                        email: "grace@acme.example"
+                        role: "member"
+        "401":
+          description: Not authenticated. No roster data is returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: >
+            Authenticated but not an administrator of the active company, or no
+            active-company context / non-full-scoped token. No roster data is
+            returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                forbidden:
+                  value:
+                    error:
+                      code: "forbidden"
+                      message: "Access denied"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    CompanyMember:
+      type: object
+      required: [user_id, display_name, email, role]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+          description: May be empty; the UI falls back to email when blank.
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, member]
+          description: Company role. UI renders "administrator" / "member".
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }

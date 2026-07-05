@@ -547,6 +547,66 @@ class TestUS3MemberIsolation:
         assert response.status_code == 403
 
 
+class TestCompanyMembersIsolation:
+    """Feature 053: the company roster is scoped to the admin's active company.
+
+    An admin authenticated for Company A receives exactly Company A's members; a
+    user who is a member only of Company B never appears, even though that user's
+    ``users`` record exists. ``company_id`` flows solely from the authenticated
+    ``CompanyAdminContext`` — never from client input.
+    """
+
+    def test_admin_sees_only_active_company_members(self, admin_company_setup):
+        token_a, company_a_id, _token_b, _company_b_id = admin_company_setup
+        alice_id = uuid.uuid4()
+        a_member_id = uuid.uuid4()
+        beta_only_user_id = uuid.uuid4()  # exists in users, member of Company B only
+
+        from tessera_core.domain.entities import CompanyMemberListing
+
+        a_roster = [
+            CompanyMemberListing(
+                user_id=alice_id,
+                display_name="Alice Admin",
+                email="alice@alpha.test",
+                role=CompanyRole.ADMIN,
+            ),
+            CompanyMemberListing(
+                user_id=a_member_id,
+                display_name="Amber Member",
+                email="amber@alpha.test",
+                role=CompanyRole.MEMBER,
+            ),
+        ]
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_repo_cls,
+            ):
+                mock_repo = AsyncMock()
+                # The A-scoped repo only ever returns Company A rows.
+                mock_repo.list_members = AsyncMock(return_value=a_roster)
+                mock_repo_cls.return_value = mock_repo
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.get(
+                        "/v1/companies/members",
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert response.status_code == 200
+        member_ids = [m["user_id"] for m in response.json()["members"]]
+        assert str(alice_id) in member_ids
+        assert str(a_member_id) in member_ids
+        # A user who belongs only to Company B never appears.
+        assert str(beta_only_user_id) not in member_ids
+        # The roster query is scoped to the authenticated company id, from context only.
+        mock_repo.list_members.assert_awaited_once_with(company_a_id)
+
+
 class TestUS1ProposalIsolation:
     """US1: proposals are scoped to the document's company; cross-company is denied."""
 

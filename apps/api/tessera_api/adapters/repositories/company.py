@@ -10,6 +10,7 @@ from tessera_api.adapters.models.company_membership import CompanyMembershipMode
 from tessera_api.adapters.models.space_membership import SpaceMembershipModel
 from tessera_api.adapters.models.user import UserModel
 from tessera_core.domain.company import Company
+from tessera_core.domain.company_member_listing import CompanyMemberListing
 from tessera_core.domain.company_member_match import CompanyMemberMatch
 from tessera_core.domain.company_membership import CompanyMembership
 from tessera_core.domain.company_role import CompanyRole
@@ -112,4 +113,27 @@ class SqlCompanyRepository(CompanyRepository):
         return [
             CompanyMemberMatch(user_id=u.id, display_name=u.display_name, email=u.email)
             for u in result.scalars().all()
+        ]
+
+    async def list_members(self, company_id: UUID) -> list[CompanyMemberListing]:
+        stmt = (
+            select(
+                UserModel.id,
+                UserModel.display_name,
+                UserModel.email,
+                CompanyMembershipModel.role,
+            )
+            .join(CompanyMembershipModel, CompanyMembershipModel.user_id == UserModel.id)
+            .where(CompanyMembershipModel.company_id == company_id)
+            .order_by(UserModel.display_name)
+        )
+        result = await self._session.execute(stmt)
+        return [
+            CompanyMemberListing(
+                user_id=row.id,
+                display_name=row.display_name,
+                email=row.email,
+                role=CompanyRole(row.role),
+            )
+            for row in result.all()
         ]

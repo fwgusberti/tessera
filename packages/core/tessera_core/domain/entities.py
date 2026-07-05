@@ -2,6 +2,7 @@ from tessera_core.domain.agent_credential import AgentCredential
 from tessera_core.domain.audit_record import AuditRecord
 from tessera_core.domain.chunk import Chunk
 from tessera_core.domain.company import Company
+from tessera_core.domain.company_member_listing import CompanyMemberListing
 from tessera_core.domain.company_membership import CompanyMembership
 from tessera_core.domain.company_role import CompanyRole
 from tessera_core.domain.confidentiality import Confidentiality
@@ -34,6 +35,7 @@ __all__ = [
     "AuditRecord",
     "Chunk",
     "Company",
+    "CompanyMemberListing",
     "CompanyMembership",
     "CompanyRole",
     "Confidentiality",

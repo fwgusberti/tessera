@@ -74,6 +74,14 @@ export function NavBar() {
               Spaces
             </a>
           )}
+          {status === "authenticated" && (
+            <a
+              href="/users"
+              className={`text-sm ${pathname?.startsWith("/users") ? "text-indigo-600 font-medium" : "text-slate-600"} hover:text-slate-900`}
+            >
+              Users
+            </a>
+          )}
           <a href="/search" className="text-sm text-slate-600 hover:text-slate-900">
             Search
           </a>
@@ -160,6 +168,15 @@ export function NavBar() {
                   className={`px-2 py-3 text-sm ${pathname?.startsWith("/spaces") ? "text-indigo-600 font-medium" : "text-slate-600"} hover:text-slate-900 hover:bg-slate-50`}
                 >
                   Spaces
+                </a>
+              )}
+              {status === "authenticated" && (
+                <a
+                  href="/users"
+                  onClick={() => setIsMenuOpen(false)}
+                  className={`px-2 py-3 text-sm ${pathname?.startsWith("/users") ? "text-indigo-600 font-medium" : "text-slate-600"} hover:text-slate-900 hover:bg-slate-50`}
+                >
+                  Users
                 </a>
               )}
               <a

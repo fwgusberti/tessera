@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from tessera_core.domain.company import Company
+from tessera_core.domain.company_member_listing import CompanyMemberListing
 from tessera_core.domain.company_member_match import CompanyMemberMatch
 from tessera_core.domain.company_membership import CompanyMembership
 
@@ -27,4 +28,9 @@ class CompanyRepository(ABC):
         self, company_id: UUID, space_id: UUID, query: str, limit: int = 20
     ) -> list[CompanyMemberMatch]:
         """Search company members by name/email, excluding existing members of space_id."""
+        ...
+
+    @abstractmethod
+    async def list_members(self, company_id: UUID) -> list[CompanyMemberListing]:
+        """List every member of the company with their company role, ordered by display name."""
         ...

@@ -18,7 +18,7 @@ from tessera_api.adapters.repo import (
     SqlOnboardingRepository,
     SqlUserRepository,
 )
-from tessera_api.auth.oidc import CurrentUser
+from tessera_api.auth.oidc import CompanyAdminContext, CurrentUser
 from tessera_core.domain.entities import (
     Company,
     CompanyMembership,
@@ -114,6 +114,31 @@ async def get_my_companies(user_info: CurrentUser, session: SessionDep) -> Compa
     entries.sort(key=lambda e: e.name)
 
     return CompanyMeResponse(companies=entries)
+
+
+@router.get("/companies/members")
+async def list_company_members(ctx: CompanyAdminContext, session: SessionDep) -> dict:
+    """List the members of the caller's active company (admin only).
+
+    The company is derived solely from the authenticated ``CompanyAdminContext``
+    (JWT claim / active-company session) — never from client input (Principle VI).
+    """
+    _user_info, company_id, _membership = ctx
+
+    company_repo = SqlCompanyRepository(session)
+    members = await company_repo.list_members(company_id)
+
+    return {
+        "members": [
+            {
+                "user_id": str(m.user_id),
+                "display_name": m.display_name,
+                "email": m.email,
+                "role": m.role.value,
+            }
+            for m in members
+        ]
+    }
 
 
 @router.post("/companies", status_code=status.HTTP_201_CREATED)
