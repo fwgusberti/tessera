@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select, text, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tessera_api.adapters.models.role_permission import RolePermissionModel
@@ -190,6 +190,37 @@ class SqlSpaceRepository(SpaceRepository):
         """Return True if a space with this slug already exists (slugs are globally unique)."""
         result = await self._session.execute(select(SpaceModel.id).where(SpaceModel.slug == slug))
         return result.scalar_one_or_none() is not None
+
+    async def delete_subtree(self, space_id: UUID) -> tuple[int, int]:
+        """Delete space_id and every descendant space in one bulk statement.
+
+        Resolves the full descendant subtree via a recursive CTE (necessary
+        because `parent_space_id` is `ON DELETE SET NULL`, so a plain delete
+        would orphan children), counts the documents about to be cascaded, then
+        bulk-deletes the spaces. Everything else (documents, versions, drafts,
+        chunks, memberships, permissions, connectors) falls out of existing FK
+        cascades. Returns (deleted_space_count, deleted_document_count).
+        """
+        subtree_sql = text("""
+            WITH RECURSIVE subtree AS (
+                SELECT id FROM spaces WHERE id = :space_id
+                UNION ALL
+                SELECT s.id FROM spaces s JOIN subtree t ON s.parent_space_id = t.id
+            )
+            SELECT id FROM subtree
+        """)
+        result = await self._session.execute(subtree_sql, {"space_id": space_id})
+        subtree_ids = [row[0] for row in result.all()]
+
+        count_result = await self._session.execute(
+            text("SELECT COUNT(*) FROM documents WHERE space_id = ANY(CAST(:ids AS uuid[]))"),
+            {"ids": subtree_ids},
+        )
+        deleted_document_count = count_result.scalar_one()
+
+        await self._session.execute(delete(SpaceModel).where(SpaceModel.id.in_(subtree_ids)))
+
+        return (len(subtree_ids), deleted_document_count)
 
     async def list_accessible_by_user(self, user_id: UUID, company_id: UUID) -> list[SpaceAccess]:
         """Recursive CTE: direct memberships + all descendant spaces.

@@ -34,6 +34,16 @@ def _access(space: Space, role: SpaceRole = SpaceRole.ADMIN, is_direct: bool = T
     return SpaceAccess(space=space, effective_role=role, is_direct=is_direct)
 
 
+def _membership(space_id: uuid.UUID, role: SpaceRole):
+    from tessera_core.domain.space_membership import SpaceMembership
+
+    return SpaceMembership(space_id=space_id, user_id=uuid.uuid4(), role=role)
+
+
+def _user_stub():
+    return type("U", (), {"password_hash": "hashed"})()
+
+
 @contextmanager
 def _bypass_onboarding():
     from tessera_api.auth.bearer import require_onboarding_complete
@@ -198,3 +208,101 @@ class TestCrossTenantIsolation:
         ids = {s["id"] for s in resp.json()["spaces"]}
         # b_parent never appears — company_id filter in CTE blocks cross-company propagation
         assert str(b_parent.id) not in ids
+
+    def test_delete_space_rejects_non_admin_through_real_service(self, two_company_setup):
+        """A non-admin of a Company A space is denied (403) end-to-end; nothing is deleted,
+        and the space still lists. The real SpaceHierarchyService runs (only repos mocked)."""
+        token_a, company_a_id, _tb, _company_b_id = two_company_setup
+        a_space = _space(company_a_id)
+
+        from tessera_api.main import app
+
+        with _bypass_onboarding():
+            with (
+                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
+                patch(
+                    "tessera_api.routers.spaces.SqlSpaceMembershipRepository"
+                ) as mock_membership_repo_cls,
+                patch("tessera_api.routers.spaces.SqlUserRepository") as mock_user_repo_cls,
+                patch("tessera_api.routers.spaces.verify_password", return_value=True),
+            ):
+                mock_repo = AsyncMock()
+                mock_repo.get_by_id_for_company = AsyncMock(return_value=a_space)
+                mock_repo.delete_subtree = AsyncMock()
+                mock_repo.list_accessible_by_user = AsyncMock(
+                    return_value=[_access(a_space, SpaceRole.VIEWER, is_direct=True)]
+                )
+                mock_repo_cls.return_value = mock_repo
+
+                mock_membership_repo = AsyncMock()
+                mock_membership_repo.get = AsyncMock(
+                    return_value=_membership(a_space.id, SpaceRole.VIEWER)
+                )
+                mock_membership_repo_cls.return_value = mock_membership_repo
+
+                mock_user_repo = AsyncMock()
+                mock_user_repo.get_by_id = AsyncMock(return_value=_user_stub())
+                mock_user_repo_cls.return_value = mock_user_repo
+
+                with TestClient(app) as client:
+                    del_resp = client.request(
+                        "DELETE",
+                        f"/v1/spaces/{a_space.id}",
+                        json={"password": "correct"},
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+                    list_resp = client.get(
+                        "/v1/spaces",
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert del_resp.status_code == 403
+        assert del_resp.json()["error"]["code"] == "forbidden"
+        mock_repo.delete_subtree.assert_not_called()
+        assert list_resp.status_code == 200
+        ids = {s["id"] for s in list_resp.json()["spaces"]}
+        assert str(a_space.id) in ids
+
+    def test_delete_space_rejects_cross_company_target_through_real_service(
+        self, two_company_setup
+    ):
+        """A Company A user deleting a real Company B space gets 404 (indistinguishable from
+        absent); nothing in Company B is deleted. The real SpaceHierarchyService runs."""
+        token_a, _company_a_id, _tb, company_b_id = two_company_setup
+        b_space = _space(company_b_id)
+
+        from tessera_api.main import app
+
+        with _bypass_onboarding():
+            with (
+                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
+                patch(
+                    "tessera_api.routers.spaces.SqlSpaceMembershipRepository"
+                ) as mock_membership_repo_cls,
+                patch("tessera_api.routers.spaces.SqlUserRepository") as mock_user_repo_cls,
+                patch("tessera_api.routers.spaces.verify_password", return_value=True),
+            ):
+                mock_repo = AsyncMock()
+                # Scoped to company A, a Company B space is invisible → None.
+                mock_repo.get_by_id_for_company = AsyncMock(return_value=None)
+                mock_repo.delete_subtree = AsyncMock()
+                mock_repo_cls.return_value = mock_repo
+
+                mock_membership_repo = AsyncMock()
+                mock_membership_repo_cls.return_value = mock_membership_repo
+
+                mock_user_repo = AsyncMock()
+                mock_user_repo.get_by_id = AsyncMock(return_value=_user_stub())
+                mock_user_repo_cls.return_value = mock_user_repo
+
+                with TestClient(app) as client:
+                    del_resp = client.request(
+                        "DELETE",
+                        f"/v1/spaces/{b_space.id}",
+                        json={"password": "correct"},
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert del_resp.status_code == 404
+        assert del_resp.json()["error"]["code"] == "not_found"
+        mock_repo.delete_subtree.assert_not_called()

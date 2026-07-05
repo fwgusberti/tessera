@@ -11,9 +11,16 @@ interface FolderTileProps {
   onDropSpace?: (draggedSpaceId: string) => void;
   onSetParent?: () => void;
   onRename?: () => void;
+  onDelete?: () => void;
 }
 
-export function FolderTile({ access, onDropSpace, onSetParent, onRename }: FolderTileProps) {
+export function FolderTile({
+  access,
+  onDropSpace,
+  onSetParent,
+  onRename,
+  onDelete,
+}: FolderTileProps) {
   const { space, effective_role } = access;
   const isAdmin = effective_role === "admin";
 
@@ -73,6 +80,14 @@ export function FolderTile({ access, onDropSpace, onSetParent, onRename }: Folde
               className="text-xs text-slate-400 hover:text-indigo-600 underline"
             >
               Set parent
+            </button>
+          )}
+          {isAdmin && onDelete && (
+            <button
+              onClick={onDelete}
+              className="text-xs text-red-500 hover:text-red-700 underline"
+            >
+              Delete
             </button>
           )}
         </div>

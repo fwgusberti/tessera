@@ -11,10 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tessera_api.adapters.audit import write_audit
 from tessera_api.adapters.database import SessionDep
-from tessera_api.adapters.repo import SqlSpaceMembershipRepository, SqlSpaceRepository
+from tessera_api.adapters.repo import (
+    SqlSpaceMembershipRepository,
+    SqlSpaceRepository,
+    SqlUserRepository,
+)
+from tessera_api.auth.jwt_auth import verify_password
 from tessera_api.auth.oidc import (
     CompanyAdminContext,
     CompanyContext,
+    CompanyMemberContext,
+    is_company_admin,
 )
 from tessera_core.domain.entities import (
     Confidentiality,
@@ -80,6 +87,10 @@ class SetParentRequest(BaseModel):
 
 class RenameSpaceRequest(BaseModel):
     name: str
+
+
+class DeleteSpaceRequest(BaseModel):
+    password: str
 
 
 def _space_response(space: Space) -> dict:
@@ -357,3 +368,75 @@ async def create_permission(
     )
     created = await repo.create_role_permission(permission)
     return {"permission": created.model_dump()}
+
+
+@router.delete("/spaces/{space_id}")
+async def delete_space(
+    space_id: UUID, body: DeleteSpaceRequest, ctx: CompanyMemberContext, session: SessionDep
+) -> dict:
+    user_info, company_id, caller_membership = ctx
+    actor_id = UUID(user_info["sub"])
+
+    # Re-verify the caller's own password before any destructive action. This
+    # depends only on the caller's account, so running it first cannot leak
+    # anything about the target space's existence or the caller's access to it.
+    user = await SqlUserRepository(session).get_by_id(actor_id)
+    if (
+        user is None
+        or not user.password_hash
+        or not verify_password(body.password, user.password_hash)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": {
+                    "code": "invalid_credentials",
+                    "message": "Current password is incorrect",
+                }
+            },
+        )
+
+    svc = SpaceHierarchyService(SqlSpaceRepository(session), SqlSpaceMembershipRepository(session))
+    try:
+        deleted_space_count, deleted_document_count = await svc.delete(
+            actor_id=actor_id,
+            space_id=space_id,
+            company_id=company_id,
+            is_company_admin=is_company_admin(caller_membership),
+        )
+    except PermissionError as exc:
+        raise _forbidden() from exc
+    except ValueError as exc:
+        # Only "not_found" is possible here — audit the cross-tenant/missing probe.
+        await write_audit(
+            session,
+            actor_type="user",
+            actor_id=actor_id,
+            action="cross_tenant_denied",
+            entity_type="space",
+            entity_id=space_id,
+            metadata={"company_id": str(company_id)},
+        )
+        await session.commit()
+        raise _not_found() from exc
+
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=actor_id,
+        action="space_deleted",
+        entity_type="space",
+        entity_id=space_id,
+        metadata={
+            "company_id": str(company_id),
+            "deleted_space_count": deleted_space_count,
+            "deleted_document_count": deleted_document_count,
+        },
+    )
+
+    return {
+        "deleted": True,
+        "space_id": str(space_id),
+        "deleted_space_count": deleted_space_count,
+        "deleted_document_count": deleted_document_count,
+    }

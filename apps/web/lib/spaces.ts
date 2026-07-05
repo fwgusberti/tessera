@@ -43,7 +43,11 @@ export function directChildren(accesses: SpaceAccess[], parentId: string): Space
   return accesses.filter((a) => a.space.parent_space_id === parentId);
 }
 
-function isDescendant(accesses: SpaceAccess[], ancestorId: string, candidateId: string): boolean {
+export function isDescendant(
+  accesses: SpaceAccess[],
+  ancestorId: string,
+  candidateId: string
+): boolean {
   const byId = new Map(accesses.map((a) => [a.space.id, a]));
   const seen = new Set<string>();
   let current = byId.get(candidateId);

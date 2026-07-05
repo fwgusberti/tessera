@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { Space, SpaceAccess } from "@/lib/types";
-import { mapSpaceAccesses, topLevelSpaces, type ApiSpaceItem } from "@/lib/spaces";
+import { mapSpaceAccesses, topLevelSpaces, isDescendant, type ApiSpaceItem } from "@/lib/spaces";
 import { FolderGrid } from "@/components/spaces/FolderGrid";
 import { SetParentModal } from "@/components/spaces/SetParentModal";
 import { RenameSpaceModal } from "@/components/spaces/RenameSpaceModal";
+import { DeleteSpaceModal } from "@/components/spaces/DeleteSpaceModal";
 import { AddSpaceModal } from "@/components/spaces/AddSpaceModal";
 import { AuthGuard } from "@/lib/auth-guard";
 
@@ -16,6 +17,7 @@ export default function SpacesPage() {
   const [error, setError] = useState<string | null>(null);
   const [managingSpace, setManagingSpace] = useState<Space | null>(null);
   const [renamingSpace, setRenamingSpace] = useState<Space | null>(null);
+  const [deletingSpace, setDeletingSpace] = useState<Space | null>(null);
   const [addingSpace, setAddingSpace] = useState(false);
 
   useEffect(() => {
@@ -33,6 +35,12 @@ export default function SpacesPage() {
   function handleSpaceUpdated(updated: Space) {
     setAccesses((prev) =>
       prev.map((a) => (a.space.id === updated.id ? { ...a, space: updated } : a))
+    );
+  }
+
+  function handleSpaceDeleted(deletedId: string) {
+    setAccesses((prev) =>
+      prev.filter((a) => a.space.id !== deletedId && !isDescendant(prev, deletedId, a.space.id))
     );
   }
 
@@ -69,6 +77,7 @@ export default function SpacesPage() {
             onReparented={handleSpaceUpdated}
             onSetParent={(space) => setManagingSpace(space)}
             onRename={(space) => setRenamingSpace(space)}
+            onDelete={(space) => setDeletingSpace(space)}
           />
         )}
         {managingSpace && (
@@ -84,6 +93,17 @@ export default function SpacesPage() {
             space={renamingSpace}
             onClose={() => setRenamingSpace(null)}
             onUpdated={handleSpaceUpdated}
+          />
+        )}
+        {deletingSpace && (
+          <DeleteSpaceModal
+            space={deletingSpace}
+            allAccesses={accesses}
+            onClose={() => setDeletingSpace(null)}
+            onDeleted={(deletedId) => {
+              handleSpaceDeleted(deletedId);
+              setDeletingSpace(null);
+            }}
           />
         )}
         {addingSpace && (

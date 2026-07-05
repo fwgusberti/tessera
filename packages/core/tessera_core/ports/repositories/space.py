@@ -57,3 +57,8 @@ class SpaceRepository(ABC):
     async def list_accessible_by_user(self, user_id: UUID, company_id: UUID) -> list[SpaceAccess]:
         """Returns all spaces the user can access (direct + inherited), scoped to company_id."""
         ...
+
+    @abstractmethod
+    async def delete_subtree(self, space_id: UUID) -> tuple[int, int]:
+        """Delete space_id and every descendant space; cascades documents/memberships/etc via FK. Returns (deleted_space_count, deleted_document_count)."""  # noqa: E501
+        ...

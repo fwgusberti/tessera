@@ -13,6 +13,7 @@ interface FolderGridProps {
   onReparented?: (updated: Space) => void;
   onSetParent?: (space: Space) => void;
   onRename?: (space: Space) => void;
+  onDelete?: (space: Space) => void;
 }
 
 export function FolderGrid({
@@ -22,6 +23,7 @@ export function FolderGrid({
   onReparented,
   onSetParent,
   onRename,
+  onDelete,
 }: FolderGridProps) {
   const [dragError, setDragError] = useState<string | null>(null);
 
@@ -50,6 +52,7 @@ export function FolderGrid({
             onDropSpace={(draggedId) => handleDropOnTile(draggedId, access.space.id)}
             onSetParent={onSetParent ? () => onSetParent(access.space) : undefined}
             onRename={onRename ? () => onRename(access.space) : undefined}
+            onDelete={onDelete ? () => onDelete(access.space) : undefined}
           />
         ))}
         {documents.map((document) => (

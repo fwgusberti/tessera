@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
-import { mapSpaceAccesses, directChildren, type ApiSpaceItem } from "@/lib/spaces";
+import { mapSpaceAccesses, directChildren, isDescendant, type ApiSpaceItem } from "@/lib/spaces";
 import type { Ancestor, Document, Space, SpaceAccess } from "@/lib/types";
 import { AuthGuard } from "@/lib/auth-guard";
 import { FolderGrid } from "@/components/spaces/FolderGrid";
 import { SpaceBreadcrumb } from "@/components/spaces/SpaceBreadcrumb";
 import { SetParentModal } from "@/components/spaces/SetParentModal";
 import { RenameSpaceModal } from "@/components/spaces/RenameSpaceModal";
+import { DeleteSpaceModal } from "@/components/spaces/DeleteSpaceModal";
 import { AddSpaceModal } from "@/components/spaces/AddSpaceModal";
 
 export default function SpaceFolderPage() {
@@ -23,6 +24,7 @@ export default function SpaceFolderPage() {
   const [error, setError] = useState<string | null>(null);
   const [managingSpace, setManagingSpace] = useState<Space | null>(null);
   const [renamingSpace, setRenamingSpace] = useState<Space | null>(null);
+  const [deletingSpace, setDeletingSpace] = useState<Space | null>(null);
   const [addingSpace, setAddingSpace] = useState(false);
 
   useEffect(() => {
@@ -46,6 +48,12 @@ export default function SpaceFolderPage() {
   function handleSpaceUpdated(updated: Space) {
     setAccesses((prev) =>
       prev.map((a) => (a.space.id === updated.id ? { ...a, space: updated } : a))
+    );
+  }
+
+  function handleSpaceDeleted(deletedId: string) {
+    setAccesses((prev) =>
+      prev.filter((a) => a.space.id !== deletedId && !isDescendant(prev, deletedId, a.space.id))
     );
   }
 
@@ -92,6 +100,7 @@ export default function SpaceFolderPage() {
                 onReparented={handleSpaceUpdated}
                 onSetParent={(space) => setManagingSpace(space)}
                 onRename={(space) => setRenamingSpace(space)}
+                onDelete={(space) => setDeletingSpace(space)}
               />
             )}
           </>
@@ -109,6 +118,17 @@ export default function SpaceFolderPage() {
             space={renamingSpace}
             onClose={() => setRenamingSpace(null)}
             onUpdated={handleSpaceUpdated}
+          />
+        )}
+        {deletingSpace && (
+          <DeleteSpaceModal
+            space={deletingSpace}
+            allAccesses={accesses}
+            onClose={() => setDeletingSpace(null)}
+            onDeleted={(deletedId) => {
+              handleSpaceDeleted(deletedId);
+              setDeletingSpace(null);
+            }}
           />
         )}
         {addingSpace && (

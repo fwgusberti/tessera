@@ -504,6 +504,129 @@ class TestRenameValidations:
         assert result == renamed
 
 
+class TestDeleteValidations:
+    @pytest.mark.asyncio
+    async def test_admin_deletes_successfully_and_returns_counts(self):
+        """A space ADMIN deletes the subtree; the (space, doc) counts are returned."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        space = _space(company_id)
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=space)
+        membership_repo.get = AsyncMock(
+            return_value=_membership(space.id, user_id, SpaceRole.ADMIN)
+        )
+        space_repo.delete_subtree = AsyncMock(return_value=(3, 5))
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        result = await svc.delete(
+            actor_id=user_id,
+            space_id=space.id,
+            company_id=company_id,
+        )
+
+        assert result == (3, 5)
+        space_repo.delete_subtree.assert_awaited_once_with(space.id)
+
+    @pytest.mark.asyncio
+    async def test_company_admin_bypasses_membership_check(self):
+        """A company admin deletes even with no space membership; membership.get is skipped."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        space = _space(company_id)
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=space)
+        membership_repo.get = AsyncMock(return_value=None)
+        space_repo.delete_subtree = AsyncMock(return_value=(1, 0))
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        result = await svc.delete(
+            actor_id=user_id,
+            space_id=space.id,
+            company_id=company_id,
+            is_company_admin=True,
+        )
+
+        assert result == (1, 0)
+        membership_repo.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_space_raises_not_found_value_error(self):
+        """A space that doesn't resolve in the company is not_found; nothing is deleted."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        space_id = uuid.uuid4()
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=None)
+        space_repo.delete_subtree = AsyncMock()
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(ValueError, match="not_found"):
+            await svc.delete(
+                actor_id=user_id,
+                space_id=space_id,
+                company_id=company_id,
+            )
+
+        space_repo.delete_subtree.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_non_admin_raises_permission_error(self):
+        """A viewer (non-admin, non-company-admin) is denied; nothing is deleted."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        space = _space(company_id)
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=space)
+        membership_repo.get = AsyncMock(
+            return_value=_membership(space.id, user_id, SpaceRole.VIEWER)
+        )
+        space_repo.delete_subtree = AsyncMock()
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(PermissionError):
+            await svc.delete(
+                actor_id=user_id,
+                space_id=space.id,
+                company_id=company_id,
+                is_company_admin=False,
+            )
+
+        space_repo.delete_subtree.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_membership_and_not_company_admin_raises_permission_error(self):
+        """No membership at all and not a company admin is denied; nothing is deleted."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        space = _space(company_id)
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=space)
+        membership_repo.get = AsyncMock(return_value=None)
+        space_repo.delete_subtree = AsyncMock()
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(PermissionError):
+            await svc.delete(
+                actor_id=user_id,
+                space_id=space.id,
+                company_id=company_id,
+                is_company_admin=False,
+            )
+
+        space_repo.delete_subtree.assert_not_called()
+
+
 class TestCreateValidations:
     @pytest.mark.asyncio
     async def test_empty_name_raises_value_error(self):

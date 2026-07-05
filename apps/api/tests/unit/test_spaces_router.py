@@ -390,3 +390,185 @@ class TestRenameSpace:
 
         assert exc_info.value.status_code == 400
         mock_audit.assert_not_called()
+
+
+def _member_ctx(actor_id: uuid.UUID, company_id: uuid.UUID, role=None) -> tuple:
+    from tessera_core.domain.entities import CompanyMembership, CompanyRole
+
+    membership = CompanyMembership(
+        id=uuid.uuid4(),
+        user_id=actor_id,
+        company_id=company_id,
+        role=role or CompanyRole.MEMBER,
+    )
+    return ({"sub": str(actor_id), "id": str(actor_id), "is_admin": False}, company_id, membership)
+
+
+def _user_stub():
+    return type("U", (), {"password_hash": "hashed"})()
+
+
+class TestDeleteSpace:
+    @pytest.mark.anyio
+    async def test_admin_with_correct_password_deletes_returns_200_with_counts(self):
+        from tessera_api.routers.spaces import DeleteSpaceRequest, delete_space
+
+        actor_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        space_id = uuid.uuid4()
+        session = AsyncMock()
+        ctx = _member_ctx(actor_id, company_id)
+
+        mock_svc = AsyncMock()
+        mock_svc.delete = AsyncMock(return_value=(2, 4))
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=_user_stub())
+
+        with (
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=AsyncMock()),
+            patch(
+                "tessera_api.routers.spaces.SqlSpaceMembershipRepository", return_value=AsyncMock()
+            ),
+            patch("tessera_api.routers.spaces.SqlUserRepository", return_value=mock_user_repo),
+            patch("tessera_api.routers.spaces.SpaceHierarchyService", return_value=mock_svc),
+            patch("tessera_api.routers.spaces.verify_password", return_value=True),
+            patch("tessera_api.routers.spaces.write_audit", new=AsyncMock()),
+        ):
+            body = DeleteSpaceRequest(password="correct")
+            result = await delete_space(space_id, body, ctx, session)
+
+        assert result == {
+            "deleted": True,
+            "space_id": str(space_id),
+            "deleted_space_count": 2,
+            "deleted_document_count": 4,
+        }
+
+    @pytest.mark.anyio
+    async def test_wrong_password_returns_401_and_service_not_called(self):
+        from tessera_api.routers.spaces import DeleteSpaceRequest, delete_space
+
+        actor_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        space_id = uuid.uuid4()
+        session = AsyncMock()
+        ctx = _member_ctx(actor_id, company_id)
+
+        mock_svc = AsyncMock()
+        mock_svc.delete = AsyncMock()
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=_user_stub())
+
+        with (
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=AsyncMock()),
+            patch(
+                "tessera_api.routers.spaces.SqlSpaceMembershipRepository", return_value=AsyncMock()
+            ),
+            patch("tessera_api.routers.spaces.SqlUserRepository", return_value=mock_user_repo),
+            patch("tessera_api.routers.spaces.SpaceHierarchyService", return_value=mock_svc),
+            patch("tessera_api.routers.spaces.verify_password", return_value=False),
+            patch("tessera_api.routers.spaces.write_audit", new=AsyncMock()),
+        ):
+            body = DeleteSpaceRequest(password="wrong")
+            with pytest.raises(HTTPException) as exc_info:
+                await delete_space(space_id, body, ctx, session)
+
+        assert exc_info.value.status_code == 401
+        mock_svc.delete.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_non_admin_returns_403(self):
+        from tessera_api.routers.spaces import DeleteSpaceRequest, delete_space
+
+        actor_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        space_id = uuid.uuid4()
+        session = AsyncMock()
+        ctx = _member_ctx(actor_id, company_id)
+
+        mock_svc = AsyncMock()
+        mock_svc.delete = AsyncMock(side_effect=PermissionError("Actor must be admin of space"))
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=_user_stub())
+
+        with (
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=AsyncMock()),
+            patch(
+                "tessera_api.routers.spaces.SqlSpaceMembershipRepository", return_value=AsyncMock()
+            ),
+            patch("tessera_api.routers.spaces.SqlUserRepository", return_value=mock_user_repo),
+            patch("tessera_api.routers.spaces.SpaceHierarchyService", return_value=mock_svc),
+            patch("tessera_api.routers.spaces.verify_password", return_value=True),
+            patch("tessera_api.routers.spaces.write_audit", new=AsyncMock()),
+        ):
+            body = DeleteSpaceRequest(password="correct")
+            with pytest.raises(HTTPException) as exc_info:
+                await delete_space(space_id, body, ctx, session)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_missing_or_cross_tenant_space_returns_404_and_audits_cross_tenant_denied(self):
+        from tessera_api.routers.spaces import DeleteSpaceRequest, delete_space
+
+        actor_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        space_id = uuid.uuid4()
+        session = AsyncMock()
+        ctx = _member_ctx(actor_id, company_id)
+
+        mock_svc = AsyncMock()
+        mock_svc.delete = AsyncMock(side_effect=ValueError("not_found"))
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=_user_stub())
+
+        with (
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=AsyncMock()),
+            patch(
+                "tessera_api.routers.spaces.SqlSpaceMembershipRepository", return_value=AsyncMock()
+            ),
+            patch("tessera_api.routers.spaces.SqlUserRepository", return_value=mock_user_repo),
+            patch("tessera_api.routers.spaces.SpaceHierarchyService", return_value=mock_svc),
+            patch("tessera_api.routers.spaces.verify_password", return_value=True),
+            patch("tessera_api.routers.spaces.write_audit", new=AsyncMock()) as mock_audit,
+        ):
+            body = DeleteSpaceRequest(password="correct")
+            with pytest.raises(HTTPException) as exc_info:
+                await delete_space(space_id, body, ctx, session)
+
+        assert exc_info.value.status_code == 404
+        mock_audit.assert_awaited()
+        assert mock_audit.call_args.kwargs["action"] == "cross_tenant_denied"
+
+    @pytest.mark.anyio
+    async def test_success_writes_space_deleted_audit_with_counts(self):
+        from tessera_api.routers.spaces import DeleteSpaceRequest, delete_space
+
+        actor_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        space_id = uuid.uuid4()
+        session = AsyncMock()
+        ctx = _member_ctx(actor_id, company_id)
+
+        mock_svc = AsyncMock()
+        mock_svc.delete = AsyncMock(return_value=(2, 4))
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=_user_stub())
+
+        with (
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=AsyncMock()),
+            patch(
+                "tessera_api.routers.spaces.SqlSpaceMembershipRepository", return_value=AsyncMock()
+            ),
+            patch("tessera_api.routers.spaces.SqlUserRepository", return_value=mock_user_repo),
+            patch("tessera_api.routers.spaces.SpaceHierarchyService", return_value=mock_svc),
+            patch("tessera_api.routers.spaces.verify_password", return_value=True),
+            patch("tessera_api.routers.spaces.write_audit", new=AsyncMock()) as mock_audit,
+        ):
+            body = DeleteSpaceRequest(password="correct")
+            await delete_space(space_id, body, ctx, session)
+
+        assert mock_audit.call_args_list[-1].kwargs["action"] == "space_deleted"
+        metadata = mock_audit.call_args_list[-1].kwargs["metadata"]
+        assert "deleted_space_count" in metadata
+        assert "deleted_document_count" in metadata

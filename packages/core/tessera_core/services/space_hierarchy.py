@@ -176,6 +176,32 @@ class SpaceHierarchyService:
             )
         )
 
+    async def delete(
+        self,
+        actor_id: UUID,
+        space_id: UUID,
+        company_id: UUID,
+        is_company_admin: bool = False,
+    ) -> tuple[int, int]:
+        """Delete a space and its full descendant subtree.
+
+        Validates:
+        - Space exists in company (ValueError("not_found") otherwise)
+        - Actor is ADMIN in space, or is_company_admin is True (PermissionError otherwise)
+
+        Returns (deleted_space_count, deleted_document_count).
+        """
+        space = await self._spaces.get_by_id_for_company(space_id, company_id)
+        if space is None:
+            raise ValueError("not_found")
+
+        if not is_company_admin:
+            membership = await self._memberships.get(space_id, actor_id)
+            if membership is None or membership.role != SpaceRole.ADMIN:
+                raise PermissionError("Actor must be admin of space")
+
+        return await self._spaces.delete_subtree(space_id)
+
     async def _resolve_slug(self, slug: str | None, name: str) -> str:
         if slug:
             return slug
