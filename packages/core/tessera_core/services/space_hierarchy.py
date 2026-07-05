@@ -9,6 +9,7 @@ from tessera_core.domain.space_access import SpaceAccess
 from tessera_core.domain.space_role import SpaceRole
 from tessera_core.ports.repositories.space import SpaceRepository
 from tessera_core.ports.repositories.space_membership import SpaceMembershipRepository
+from tessera_core.services.slug import slugify
 
 _MAX_DEPTH = 10
 
@@ -120,6 +121,72 @@ class SpaceHierarchyService:
             raise ValueError("name_too_long")
 
         return await self._spaces.rename(space_id, trimmed)
+
+    async def create(
+        self,
+        actor_id: UUID,
+        company_id: UUID,
+        name: str,
+        sector: str = "General",
+        slug: str | None = None,
+        parent_space_id: UUID | None = None,
+        default_language: str = "pt-BR",
+        retention_policy: dict | None = None,
+        confidence_threshold: float = 0.7,
+    ) -> Space:
+        """Create a new space, optionally nested under parent_space_id.
+
+        Validates:
+        - name is non-empty after trim and <= 255 chars
+        - if parent_space_id is set: it resolves in company, actor is ADMIN
+          there, and the resulting depth stays within the limit
+        Auto-derives a unique slug from name when slug is not given.
+        """
+        trimmed = name.strip()
+        if not trimmed:
+            raise ValueError("empty_name")
+        if len(trimmed) > 255:
+            raise ValueError("name_too_long")
+
+        if parent_space_id is not None:
+            parent_space = await self._spaces.get_by_id_for_company(parent_space_id, company_id)
+            if parent_space is None:
+                raise ValueError("cross_company")
+
+            parent_membership = await self._memberships.get(parent_space_id, actor_id)
+            if parent_membership is None or parent_membership.role != SpaceRole.ADMIN:
+                raise PermissionError("Actor must be admin of parent space")
+
+            ancestor_chain = await self._spaces.get_ancestor_chain(parent_space_id)
+            if len(ancestor_chain) + 1 >= _MAX_DEPTH:
+                raise ValueError("depth_limit")
+
+        resolved_slug = await self._resolve_slug(slug, trimmed)
+
+        return await self._spaces.create(
+            Space(
+                slug=resolved_slug,
+                name=trimmed,
+                sector=sector.strip() or "General",
+                company_id=company_id,
+                parent_space_id=parent_space_id,
+                retention_policy=retention_policy or {},
+                confidence_threshold=confidence_threshold,
+                default_language=default_language,
+            )
+        )
+
+    async def _resolve_slug(self, slug: str | None, name: str) -> str:
+        if slug:
+            return slug
+
+        base = slugify(name)
+        candidate = base
+        suffix = 2
+        while await self._spaces.slug_exists(candidate):
+            candidate = f"{base}-{suffix}"[:100]
+            suffix += 1
+        return candidate
 
     async def get_ancestor_path(self, space_id: UUID, company_id: UUID) -> list[Space]:
         """Return ancestor chain for breadcrumb display (no access grant implied)."""

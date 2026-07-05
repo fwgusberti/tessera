@@ -186,6 +186,11 @@ class SqlSpaceRepository(SpaceRepository):
         model = result.scalar_one()
         return _space_from_model(model)
 
+    async def slug_exists(self, slug: str) -> bool:
+        """Return True if a space with this slug already exists (slugs are globally unique)."""
+        result = await self._session.execute(select(SpaceModel.id).where(SpaceModel.slug == slug))
+        return result.scalar_one_or_none() is not None
+
     async def list_accessible_by_user(self, user_id: UUID, company_id: UUID) -> list[SpaceAccess]:
         """Recursive CTE: direct memberships + all descendant spaces.
 

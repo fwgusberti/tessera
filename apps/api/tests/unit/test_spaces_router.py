@@ -29,8 +29,7 @@ class TestCreateSpaceGrantsCreatorMembership:
         session = AsyncMock()
         ctx = _ctx(actor_id, company_id)
 
-        mock_space_repo = AsyncMock()
-        mock_space_repo.create.return_value = type(
+        stub = type(
             "S",
             (),
             {
@@ -39,14 +38,17 @@ class TestCreateSpaceGrantsCreatorMembership:
             },
         )()
 
+        mock_svc = AsyncMock()
+        mock_svc.create = AsyncMock(return_value=stub)
         mock_membership_repo = AsyncMock()
 
         with (
-            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=mock_space_repo),
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=AsyncMock()),
             patch(
                 "tessera_api.routers.spaces.SqlSpaceMembershipRepository",
                 return_value=mock_membership_repo,
             ),
+            patch("tessera_api.routers.spaces.SpaceHierarchyService", return_value=mock_svc),
             patch("tessera_api.routers.spaces.write_audit", new=AsyncMock()) as mock_audit,
         ):
             body = CreateSpaceRequest(slug="eng", name="Eng", sector="tech")
@@ -57,7 +59,9 @@ class TestCreateSpaceGrantsCreatorMembership:
         assert added.space_id == space_id
         assert added.user_id == actor_id
         assert added.role == SpaceRole.ADMIN
-        mock_audit.assert_awaited_once()
+        assert mock_audit.await_count == 2
+        assert mock_audit.call_args_list[0].kwargs["action"] == "space_created"
+        assert mock_audit.call_args_list[1].kwargs["action"] == "member_invited"
 
     @pytest.mark.anyio
     async def test_create_space_response_shape_unchanged(self):
@@ -69,8 +73,7 @@ class TestCreateSpaceGrantsCreatorMembership:
         session = AsyncMock()
         ctx = _ctx(actor_id, company_id)
 
-        mock_space_repo = AsyncMock()
-        mock_space_repo.create.return_value = type(
+        stub = type(
             "S",
             (),
             {
@@ -79,17 +82,185 @@ class TestCreateSpaceGrantsCreatorMembership:
             },
         )()
 
+        mock_svc = AsyncMock()
+        mock_svc.create = AsyncMock(return_value=stub)
+
         with (
-            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=mock_space_repo),
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=AsyncMock()),
             patch(
                 "tessera_api.routers.spaces.SqlSpaceMembershipRepository", return_value=AsyncMock()
             ),
+            patch("tessera_api.routers.spaces.SpaceHierarchyService", return_value=mock_svc),
             patch("tessera_api.routers.spaces.write_audit", new=AsyncMock()),
         ):
             body = CreateSpaceRequest(slug="eng", name="Eng", sector="tech")
             result = await create_space(body, ctx, session)
 
         assert result == {"space": {"id": str(space_id), "name": "Eng"}}
+
+
+class TestCreateSpaceRequestDefaults:
+    def test_name_only_defaults_slug_sector_and_parent_to_none(self):
+        from tessera_api.routers.spaces import CreateSpaceRequest
+
+        body = CreateSpaceRequest(name="Eng")
+        assert body.slug is None
+        assert body.sector == "General"
+        assert body.parent_space_id is None
+
+
+class TestCreateSpaceValidationErrors:
+    def _stub(self, space_id: uuid.UUID, parent_space_id: uuid.UUID | None = None):
+        return type(
+            "S",
+            (),
+            {
+                "id": space_id,
+                "parent_space_id": parent_space_id,
+                "model_dump": lambda self: {"id": str(space_id), "name": "Eng"},
+            },
+        )()
+
+    @pytest.mark.anyio
+    async def test_invalid_name_returns_400_and_no_membership(self):
+        from tessera_api.routers.spaces import CreateSpaceRequest, create_space
+
+        actor_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        session = AsyncMock()
+        ctx = _ctx(actor_id, company_id)
+
+        mock_svc = AsyncMock()
+        mock_svc.create = AsyncMock(side_effect=ValueError("empty_name"))
+        mock_membership_repo = AsyncMock()
+
+        with (
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=AsyncMock()),
+            patch(
+                "tessera_api.routers.spaces.SqlSpaceMembershipRepository",
+                return_value=mock_membership_repo,
+            ),
+            patch("tessera_api.routers.spaces.SpaceHierarchyService", return_value=mock_svc),
+            patch("tessera_api.routers.spaces.write_audit", new=AsyncMock()) as mock_audit,
+        ):
+            body = CreateSpaceRequest(name="   ")
+            with pytest.raises(HTTPException) as exc_info:
+                await create_space(body, ctx, session)
+
+        assert exc_info.value.status_code == 400
+        mock_membership_repo.add.assert_not_called()
+        mock_audit.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_invalid_parent_returns_400(self):
+        from tessera_api.routers.spaces import CreateSpaceRequest, create_space
+
+        actor_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        session = AsyncMock()
+        ctx = _ctx(actor_id, company_id)
+
+        mock_svc = AsyncMock()
+        mock_svc.create = AsyncMock(side_effect=ValueError("cross_company"))
+
+        with (
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=AsyncMock()),
+            patch(
+                "tessera_api.routers.spaces.SqlSpaceMembershipRepository", return_value=AsyncMock()
+            ),
+            patch("tessera_api.routers.spaces.SpaceHierarchyService", return_value=mock_svc),
+            patch("tessera_api.routers.spaces.write_audit", new=AsyncMock()),
+        ):
+            body = CreateSpaceRequest(name="Eng", parent_space_id=uuid.uuid4())
+            with pytest.raises(HTTPException) as exc_info:
+                await create_space(body, ctx, session)
+
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_depth_limit_returns_400(self):
+        from tessera_api.routers.spaces import CreateSpaceRequest, create_space
+
+        actor_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        session = AsyncMock()
+        ctx = _ctx(actor_id, company_id)
+
+        mock_svc = AsyncMock()
+        mock_svc.create = AsyncMock(side_effect=ValueError("depth_limit"))
+
+        with (
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=AsyncMock()),
+            patch(
+                "tessera_api.routers.spaces.SqlSpaceMembershipRepository", return_value=AsyncMock()
+            ),
+            patch("tessera_api.routers.spaces.SpaceHierarchyService", return_value=mock_svc),
+            patch("tessera_api.routers.spaces.write_audit", new=AsyncMock()),
+        ):
+            body = CreateSpaceRequest(name="Eng", parent_space_id=uuid.uuid4())
+            with pytest.raises(HTTPException) as exc_info:
+                await create_space(body, ctx, session)
+
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_non_admin_of_parent_returns_403_and_no_membership(self):
+        from tessera_api.routers.spaces import CreateSpaceRequest, create_space
+
+        actor_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        session = AsyncMock()
+        ctx = _ctx(actor_id, company_id)
+
+        mock_svc = AsyncMock()
+        mock_svc.create = AsyncMock(
+            side_effect=PermissionError("Actor must be admin of parent space")
+        )
+        mock_membership_repo = AsyncMock()
+
+        with (
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=AsyncMock()),
+            patch(
+                "tessera_api.routers.spaces.SqlSpaceMembershipRepository",
+                return_value=mock_membership_repo,
+            ),
+            patch("tessera_api.routers.spaces.SpaceHierarchyService", return_value=mock_svc),
+            patch("tessera_api.routers.spaces.write_audit", new=AsyncMock()),
+        ):
+            body = CreateSpaceRequest(name="Eng", parent_space_id=uuid.uuid4())
+            with pytest.raises(HTTPException) as exc_info:
+                await create_space(body, ctx, session)
+
+        assert exc_info.value.status_code == 403
+        mock_membership_repo.add.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_success_with_parent_writes_space_created_audit_with_parent_metadata(self):
+        from tessera_api.routers.spaces import CreateSpaceRequest, create_space
+
+        actor_id = uuid.uuid4()
+        company_id = uuid.uuid4()
+        space_id = uuid.uuid4()
+        parent_id = uuid.uuid4()
+        session = AsyncMock()
+        ctx = _ctx(actor_id, company_id)
+
+        stub = self._stub(space_id, parent_space_id=parent_id)
+        mock_svc = AsyncMock()
+        mock_svc.create = AsyncMock(return_value=stub)
+
+        with (
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=AsyncMock()),
+            patch(
+                "tessera_api.routers.spaces.SqlSpaceMembershipRepository", return_value=AsyncMock()
+            ),
+            patch("tessera_api.routers.spaces.SpaceHierarchyService", return_value=mock_svc),
+            patch("tessera_api.routers.spaces.write_audit", new=AsyncMock()) as mock_audit,
+        ):
+            body = CreateSpaceRequest(name="Eng", parent_space_id=parent_id)
+            await create_space(body, ctx, session)
+
+        assert mock_audit.call_args_list[0].kwargs["metadata"]["parent_space_id"] == str(parent_id)
 
 
 class TestRenameSpace:

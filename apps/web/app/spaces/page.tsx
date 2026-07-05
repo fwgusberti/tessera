@@ -7,6 +7,7 @@ import { mapSpaceAccesses, topLevelSpaces, type ApiSpaceItem } from "@/lib/space
 import { FolderGrid } from "@/components/spaces/FolderGrid";
 import { SetParentModal } from "@/components/spaces/SetParentModal";
 import { RenameSpaceModal } from "@/components/spaces/RenameSpaceModal";
+import { AddSpaceModal } from "@/components/spaces/AddSpaceModal";
 import { AuthGuard } from "@/lib/auth-guard";
 
 export default function SpacesPage() {
@@ -15,6 +16,7 @@ export default function SpacesPage() {
   const [error, setError] = useState<string | null>(null);
   const [managingSpace, setManagingSpace] = useState<Space | null>(null);
   const [renamingSpace, setRenamingSpace] = useState<Space | null>(null);
+  const [addingSpace, setAddingSpace] = useState(false);
 
   useEffect(() => {
     api
@@ -34,12 +36,27 @@ export default function SpacesPage() {
     );
   }
 
+  function handleSpaceCreated(created: Space) {
+    setAccesses((prev) => [
+      ...prev,
+      { space: created, effective_role: "admin" as const, is_direct: true },
+    ]);
+  }
+
   const roots = topLevelSpaces(accesses);
 
   return (
     <AuthGuard>
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-slate-900">Spaces</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-slate-900">Spaces</h1>
+          <button
+            onClick={() => setAddingSpace(true)}
+            className="px-4 py-2 text-sm text-white bg-indigo-600 rounded hover:bg-indigo-700"
+          >
+            Add Space
+          </button>
+        </div>
         {loading && <p className="text-sm text-slate-500">Loading spaces…</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
         {!loading && !error && roots.length === 0 && (
@@ -67,6 +84,15 @@ export default function SpacesPage() {
             space={renamingSpace}
             onClose={() => setRenamingSpace(null)}
             onUpdated={handleSpaceUpdated}
+          />
+        )}
+        {addingSpace && (
+          <AddSpaceModal
+            onClose={() => setAddingSpace(false)}
+            onCreated={(created) => {
+              handleSpaceCreated(created);
+              setAddingSpace(false);
+            }}
           />
         )}
       </div>

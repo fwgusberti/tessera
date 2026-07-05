@@ -78,6 +78,51 @@ class TestCrossTenantIsolation:
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "invalid_parent"
 
+    def test_create_space_rejects_cross_company_parent(self, two_company_setup):
+        """Company A user cannot create a space nested under a Company B parent."""
+        token_a, company_a_id, _token_b, company_b_id = two_company_setup
+        company_b_space = _space(company_b_id)
+        attempted_name = "Should Not Nest"
+
+        from tessera_api.main import app
+
+        with _bypass_onboarding():
+            with (
+                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
+                patch(
+                    "tessera_api.routers.spaces.SqlSpaceMembershipRepository"
+                ) as mock_membership_repo_cls,
+                patch("tessera_api.routers.spaces.SpaceHierarchyService") as mock_svc_cls,
+            ):
+                mock_repo = AsyncMock()
+                mock_repo.list_accessible_by_user = AsyncMock(return_value=[])
+                mock_repo_cls.return_value = mock_repo
+
+                mock_membership_repo = AsyncMock()
+                mock_membership_repo_cls.return_value = mock_membership_repo
+
+                mock_svc = AsyncMock()
+                mock_svc.create = AsyncMock(side_effect=ValueError("cross_company"))
+                mock_svc_cls.return_value = mock_svc
+
+                with TestClient(app) as client:
+                    create_resp = client.post(
+                        "/v1/spaces",
+                        json={"name": attempted_name, "parent_space_id": str(company_b_space.id)},
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+                    list_resp = client.get(
+                        "/v1/spaces",
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert create_resp.status_code == 400
+        assert create_resp.json()["error"]["code"] == "invalid_parent"
+        mock_membership_repo.add.assert_not_called()
+        assert list_resp.status_code == 200
+        names = {s["name"] for s in list_resp.json()["spaces"]}
+        assert attempted_name not in names
+
     def test_list_accessible_by_user_never_leaks_across_companies(self, two_company_setup):
         """GET /v1/spaces for Company A user never includes Company B spaces."""
         token_a, company_a_id, _tb, company_b_id = two_company_setup
@@ -106,12 +151,18 @@ class TestCrossTenantIsolation:
         assert str(a_space.id) in ids
         assert str(b_space.id) not in ids
         # The list_accessible_by_user was called with company A's id
-        mock_repo.list_accessible_by_user.assert_awaited_once_with(
-            uuid.UUID(mock_repo.list_accessible_by_user.await_args[0][0].__str__()
-                      if hasattr(mock_repo.list_accessible_by_user.await_args[0][0], '__str__')
-                      else str(mock_repo.list_accessible_by_user.await_args[0][0])),
-            company_a_id,
-        ) if False else None  # assertion on company_id isolation guaranteed by CTE design
+        (
+            mock_repo.list_accessible_by_user.assert_awaited_once_with(
+                uuid.UUID(
+                    mock_repo.list_accessible_by_user.await_args[0][0].__str__()
+                    if hasattr(mock_repo.list_accessible_by_user.await_args[0][0], "__str__")
+                    else str(mock_repo.list_accessible_by_user.await_args[0][0])
+                ),
+                company_a_id,
+            )
+            if False
+            else None
+        )  # assertion on company_id isolation guaranteed by CTE design
 
     def test_inherited_access_stays_within_company(self, two_company_setup):
         """Even if parent_space_id pointed cross-company, CTE company_id filter stops it.

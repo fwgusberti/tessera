@@ -502,3 +502,213 @@ class TestRenameValidations:
 
         space_repo.rename.assert_awaited_once_with(space.id, "New Name")
         assert result == renamed
+
+
+class TestCreateValidations:
+    @pytest.mark.asyncio
+    async def test_empty_name_raises_value_error(self):
+        """Whitespace-only name is rejected."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(ValueError, match="empty_name"):
+            await svc.create(
+                actor_id=user_id,
+                company_id=company_id,
+                name="   ",
+            )
+
+    @pytest.mark.asyncio
+    async def test_name_too_long_raises_value_error(self):
+        """Name over 255 chars is rejected."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(ValueError, match="name_too_long"):
+            await svc.create(
+                actor_id=user_id,
+                company_id=company_id,
+                name="x" * 256,
+            )
+
+    @pytest.mark.asyncio
+    async def test_root_creation_generates_slug_and_defaults_sector(self):
+        """No slug/sector given: slug is derived from name, sector defaults to General."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.slug_exists = AsyncMock(return_value=False)
+        space_repo.create = AsyncMock(side_effect=lambda space: space)
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        result = await svc.create(
+            actor_id=user_id,
+            company_id=company_id,
+            name="Marketing",
+        )
+
+        space_repo.create.assert_awaited_once()
+        created: Space = space_repo.create.call_args[0][0]
+        assert created.slug == "marketing"
+        assert created.sector == "General"
+        assert created.parent_space_id is None
+        assert result == created
+
+    @pytest.mark.asyncio
+    async def test_slug_collision_appends_numeric_suffix(self):
+        """When the derived slug already exists, a numeric suffix is appended until unique."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.slug_exists = AsyncMock(side_effect=[True, False])
+        space_repo.create = AsyncMock(side_effect=lambda space: space)
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        await svc.create(
+            actor_id=user_id,
+            company_id=company_id,
+            name="Marketing",
+        )
+
+        created: Space = space_repo.create.call_args[0][0]
+        assert created.slug == "marketing-2"
+
+    @pytest.mark.asyncio
+    async def test_explicit_slug_and_sector_pass_through_unchanged(self):
+        """Explicit slug/sector are used as-is, and slug_exists is never consulted."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.slug_exists = AsyncMock(return_value=False)
+        space_repo.create = AsyncMock(side_effect=lambda space: space)
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        result = await svc.create(
+            actor_id=user_id,
+            company_id=company_id,
+            name="Engineering",
+            sector="tech",
+            slug="eng",
+        )
+
+        space_repo.slug_exists.assert_not_called()
+        created: Space = space_repo.create.call_args[0][0]
+        assert created.slug == "eng"
+        assert created.sector == "tech"
+        assert result == created
+
+    @pytest.mark.asyncio
+    async def test_missing_parent_raises_cross_company_value_error(self):
+        """A parent_space_id that doesn't resolve in the company is cross_company."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        parent_id = uuid.uuid4()
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=None)
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(ValueError, match="cross_company"):
+            await svc.create(
+                actor_id=user_id,
+                company_id=company_id,
+                name="Marketing",
+                parent_space_id=parent_id,
+            )
+
+        space_repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_non_admin_of_parent_raises_permission_error(self):
+        """Actor without ADMIN role on the parent space is denied."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        parent = _space(company_id)
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=parent)
+        membership_repo.get = AsyncMock(
+            return_value=_membership(parent.id, user_id, SpaceRole.VIEWER)
+        )
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(PermissionError):
+            await svc.create(
+                actor_id=user_id,
+                company_id=company_id,
+                name="Marketing",
+                parent_space_id=parent.id,
+            )
+
+        space_repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_depth_limit_raises_value_error(self):
+        """Exceeding the max nesting depth under the given parent is rejected."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        parent = _space(company_id)
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=parent)
+        membership_repo.get = AsyncMock(
+            return_value=_membership(parent.id, user_id, SpaceRole.ADMIN)
+        )
+        space_repo.get_ancestor_chain = AsyncMock(
+            return_value=[_space(company_id) for _ in range(9)]
+        )
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        with pytest.raises(ValueError, match="depth_limit"):
+            await svc.create(
+                actor_id=user_id,
+                company_id=company_id,
+                name="Too Deep",
+                parent_space_id=parent.id,
+            )
+
+        space_repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_nested_creation_sets_parent_space_id(self):
+        """A valid nested creation sets parent_space_id on the created Space."""
+        company_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        parent = _space(company_id)
+
+        space_repo = AsyncMock()
+        membership_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=parent)
+        membership_repo.get = AsyncMock(
+            return_value=_membership(parent.id, user_id, SpaceRole.ADMIN)
+        )
+        space_repo.get_ancestor_chain = AsyncMock(return_value=[])
+        space_repo.slug_exists = AsyncMock(return_value=False)
+        space_repo.create = AsyncMock(side_effect=lambda space: space)
+
+        svc = SpaceHierarchyService(space_repo, membership_repo)
+        result = await svc.create(
+            actor_id=user_id,
+            company_id=company_id,
+            name="Q3 Campaigns",
+            parent_space_id=parent.id,
+        )
+
+        assert result.parent_space_id == parent.id

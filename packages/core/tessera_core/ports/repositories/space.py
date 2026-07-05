@@ -49,6 +49,11 @@ class SpaceRepository(ABC):
         ...
 
     @abstractmethod
+    async def slug_exists(self, slug: str) -> bool:
+        """Return True if a space with this slug already exists (slugs are globally unique)."""
+        ...
+
+    @abstractmethod
     async def list_accessible_by_user(self, user_id: UUID, company_id: UUID) -> list[SpaceAccess]:
         """Returns all spaces the user can access (direct + inherited), scoped to company_id."""
         ...

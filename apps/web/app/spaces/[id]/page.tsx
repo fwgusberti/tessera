@@ -10,6 +10,7 @@ import { FolderGrid } from "@/components/spaces/FolderGrid";
 import { SpaceBreadcrumb } from "@/components/spaces/SpaceBreadcrumb";
 import { SetParentModal } from "@/components/spaces/SetParentModal";
 import { RenameSpaceModal } from "@/components/spaces/RenameSpaceModal";
+import { AddSpaceModal } from "@/components/spaces/AddSpaceModal";
 
 export default function SpaceFolderPage() {
   const params = useParams();
@@ -22,6 +23,7 @@ export default function SpaceFolderPage() {
   const [error, setError] = useState<string | null>(null);
   const [managingSpace, setManagingSpace] = useState<Space | null>(null);
   const [renamingSpace, setRenamingSpace] = useState<Space | null>(null);
+  const [addingSpace, setAddingSpace] = useState(false);
 
   useEffect(() => {
     if (!folderId) return;
@@ -47,6 +49,13 @@ export default function SpaceFolderPage() {
     );
   }
 
+  function handleSpaceCreated(created: Space) {
+    setAccesses((prev) => [
+      ...prev,
+      { space: created, effective_role: "admin" as const, is_direct: true },
+    ]);
+  }
+
   const folder = accesses.find((a) => a.space.id === folderId)?.space ?? null;
   const subfolders = directChildren(accesses, folderId);
   const isEmpty = subfolders.length === 0 && documents.length === 0;
@@ -64,7 +73,15 @@ export default function SpaceFolderPage() {
               allAccesses={accesses}
               onReparented={handleSpaceUpdated}
             />
-            <h1 className="text-2xl font-bold text-slate-900">{folder.name}</h1>
+            <div className="flex items-center justify-between">
+              <h1 className="text-2xl font-bold text-slate-900">{folder.name}</h1>
+              <button
+                onClick={() => setAddingSpace(true)}
+                className="px-4 py-2 text-sm text-white bg-indigo-600 rounded hover:bg-indigo-700"
+              >
+                Add Space
+              </button>
+            </div>
             {isEmpty ? (
               <p className="text-sm text-slate-500">This folder has no sub-folders or documents.</p>
             ) : (
@@ -92,6 +109,16 @@ export default function SpaceFolderPage() {
             space={renamingSpace}
             onClose={() => setRenamingSpace(null)}
             onUpdated={handleSpaceUpdated}
+          />
+        )}
+        {addingSpace && (
+          <AddSpaceModal
+            parentSpaceId={folderId}
+            onClose={() => setAddingSpace(false)}
+            onCreated={(created) => {
+              handleSpaceCreated(created);
+              setAddingSpace(false);
+            }}
           />
         )}
       </div>

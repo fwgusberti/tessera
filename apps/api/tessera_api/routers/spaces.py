@@ -59,9 +59,10 @@ def _invalid_name(reason: str) -> HTTPException:
 
 
 class CreateSpaceRequest(BaseModel):
-    slug: str
     name: str
-    sector: str
+    slug: str | None = None
+    sector: str = "General"
+    parent_space_id: UUID | None = None
     default_language: str = "pt-BR"
     retention_policy: dict[str, Any] = {}
     confidence_threshold: float = 0.7
@@ -99,24 +100,48 @@ def _space_access_response(access_list: list) -> list[dict]:
 async def create_space(body: CreateSpaceRequest, ctx: CompanyContext, session: SessionDep) -> dict:
     user_info, company_id = ctx
     actor_id = UUID(user_info.get("id") or user_info["sub"])
-    space = Space(
-        slug=body.slug,
-        name=body.name,
-        sector=body.sector,
-        company_id=company_id,
-        default_language=body.default_language,
-        retention_policy=body.retention_policy,
-        confidence_threshold=body.confidence_threshold,
-    )
+
     repo = SqlSpaceRepository(session)
-    created = await repo.create(space)
+    membership_repo = SqlSpaceMembershipRepository(session)
+    svc = SpaceHierarchyService(repo, membership_repo)
+
+    try:
+        created = await svc.create(
+            actor_id=actor_id,
+            company_id=company_id,
+            name=body.name,
+            sector=body.sector,
+            slug=body.slug,
+            parent_space_id=body.parent_space_id,
+            default_language=body.default_language,
+            retention_policy=body.retention_policy,
+            confidence_threshold=body.confidence_threshold,
+        )
+    except PermissionError as exc:
+        raise _forbidden() from exc
+    except ValueError as exc:
+        reason = str(exc)
+        if reason in ("cross_company", "depth_limit"):
+            raise _invalid_parent(reason) from exc
+        raise _invalid_name(reason) from exc
 
     # Grant the creator admin access immediately (042) — there is no existing
     # membership yet to authorize against, so this bypasses MembershipService.invite
     # the same way create_company grants its creator an admin CompanyMembership directly.
-    membership_repo = SqlSpaceMembershipRepository(session)
     membership = await membership_repo.add(
         SpaceMembership(space_id=created.id, user_id=actor_id, role=SpaceRole.ADMIN)
+    )
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=actor_id,
+        action="space_created",
+        entity_type="space",
+        entity_id=created.id,
+        metadata={
+            "company_id": str(company_id),
+            "parent_space_id": str(body.parent_space_id) if body.parent_space_id else None,
+        },
     )
     await write_audit(
         session,
