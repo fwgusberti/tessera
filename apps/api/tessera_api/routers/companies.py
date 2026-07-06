@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy.exc import IntegrityError
 
 from tessera_api.adapters.audit import write_audit
 from tessera_api.adapters.database import SessionDep
@@ -19,12 +23,14 @@ from tessera_api.adapters.repo import (
     SqlUserRepository,
 )
 from tessera_api.auth.oidc import CompanyAdminContext, CurrentUser
+from tessera_api.routers.invitations import INVITATION_TTL_DAYS, send_invitation_email
 from tessera_core.domain.entities import (
     Company,
     CompanyMembership,
     CompanyRole,
     DomainJoinPolicy,
     DomainPolicy,
+    Invitation,
     InvitationStatus,
     JoinRequest,
     JoinRequestStatus,
@@ -64,6 +70,16 @@ class CompanyMeEntry(BaseModel):
 
 class CompanyMeResponse(BaseModel):
     companies: list[CompanyMeEntry]
+
+
+class InviteCompanyMemberRequest(BaseModel):
+    email: EmailStr
+    role: CompanyRole = CompanyRole.MEMBER
+
+
+class AddCompanyMemberRequest(BaseModel):
+    user_id: UUID
+    role: CompanyRole = CompanyRole.MEMBER
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +154,200 @@ async def list_company_members(ctx: CompanyAdminContext, session: SessionDep) ->
             }
             for m in members
         ]
+    }
+
+
+@router.post("/companies/invitations", status_code=status.HTTP_201_CREATED)
+async def invite_company_member(
+    body: InviteCompanyMemberRequest, ctx: CompanyAdminContext, session: SessionDep
+) -> dict:
+    """Invite a person by email to the caller's active company with a chosen role.
+
+    The company is derived solely from ``CompanyAdminContext`` — never from client
+    input (Principle VI). The chosen role is persisted on the invitation so it is
+    granted when the invitee accepts (FR-004, FR-011).
+    """
+    user_info, company_id, _membership = ctx
+    admin_id = UUID(user_info["sub"])
+    email = body.email.lower()
+
+    company_repo = SqlCompanyRepository(session)
+    user_repo = SqlUserRepository(session)
+    inv_repo = SqlInvitationRepository(session)
+
+    # Guard: already a member of this company (FR-007).
+    target_user = await user_repo.get_by_email(email)
+    if target_user:
+        existing_membership = await company_repo.get_membership(target_user.id, company_id)
+        if existing_membership:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": {
+                        "code": "already_member",
+                        "message": "Already a member of this company",
+                    }
+                },
+            )
+
+    # Guard: an outstanding invitation already exists for this company (FR-008).
+    pending = await inv_repo.get_pending_for_email(email)
+    if any(p.company_id == company_id for p in pending):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": {"code": "already_invited", "message": "An invitation is already pending"}
+            },
+        )
+
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    try:
+        created = await inv_repo.create(
+            Invitation(
+                company_id=company_id,
+                invited_by_user_id=admin_id,
+                email=email,
+                token_hash=token_hash,
+                status=InvitationStatus.PENDING,
+                role=body.role,
+                expires_at=datetime.now(UTC) + timedelta(days=INVITATION_TTL_DAYS),
+            )
+        )
+    except IntegrityError:
+        # Concurrent invite tripped the pending-uniqueness index (FR-008 race).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": {"code": "already_invited", "message": "An invitation is already pending"}
+            },
+        ) from None
+
+    # Persist the invitation regardless of delivery outcome, so a send failure
+    # still leaves the pending record behind (contract: row created, 502 surfaced).
+    await session.commit()
+
+    company = await company_repo.get_by_id(company_id)
+    caller = await user_repo.get_by_id(admin_id)
+    invited_by_name = caller.display_name if caller else user_info.get("email", "")
+
+    try:
+        await send_invitation_email(
+            to=email,
+            company_name=company.name if company else "",
+            invited_by=invited_by_name,
+            token=token,
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "error": {
+                    "code": "send_failed",
+                    "message": "The invitation could not be delivered",
+                }
+            },
+        ) from None
+
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=admin_id,
+        action="invitation.sent",
+        entity_type="invitation",
+        entity_id=created.id,
+        metadata={"email": email, "company_id": str(company_id)},
+    )
+
+    return {"status": "sent", "email": email, "role": body.role.value}
+
+
+@router.get("/companies/addable-users")
+async def search_addable_users(
+    ctx: CompanyAdminContext,
+    session: SessionDep,
+    q: str = Query(min_length=2),
+) -> dict:
+    """Type-ahead search of registered users not already in the active company.
+
+    Scoped to the ``CompanyAdminContext`` company_id; returns identity fields only
+    and requires a minimum query length so it cannot enumerate the directory (US2,
+    US4). ``company_id`` is never sourced from client input.
+    """
+    _user_info, company_id, _membership = ctx
+
+    company_repo = SqlCompanyRepository(session)
+    matches = await company_repo.search_addable_users(company_id, q)
+
+    return {
+        "users": [
+            {"user_id": str(m.user_id), "display_name": m.display_name, "email": m.email}
+            for m in matches
+        ]
+    }
+
+
+@router.post("/companies/members", status_code=status.HTTP_201_CREATED)
+async def add_company_member(
+    body: AddCompanyMemberRequest, ctx: CompanyAdminContext, session: SessionDep
+) -> dict:
+    """Directly add an already-registered user to the active company (US2, FR-003).
+
+    The membership is created immediately with the admin-chosen role; ``company_id``
+    comes solely from ``CompanyAdminContext`` (Principle VI, FR-010).
+    """
+    user_info, company_id, _membership = ctx
+    admin_id = UUID(user_info["sub"])
+
+    company_repo = SqlCompanyRepository(session)
+    user_repo = SqlUserRepository(session)
+
+    target = await user_repo.get_by_id(body.user_id)
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "no_such_user", "message": "No such user"}},
+        )
+
+    existing = await company_repo.get_membership(body.user_id, company_id)
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": {"code": "already_member", "message": "Already a member of this company"}
+            },
+        )
+
+    try:
+        membership = await company_repo.add_membership(
+            CompanyMembership(user_id=body.user_id, company_id=company_id, role=body.role)
+        )
+    except IntegrityError:
+        # Concurrent add tripped uq_company_membership (FR-007 race).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": {"code": "already_member", "message": "Already a member of this company"}
+            },
+        ) from None
+
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=admin_id,
+        action="company.member_added",
+        entity_type="company_membership",
+        entity_id=membership.id,
+        metadata={"company_id": str(company_id), "user_id": str(body.user_id)},
+    )
+
+    return {
+        "member": {
+            "user_id": str(target.id),
+            "display_name": target.display_name,
+            "email": target.email,
+            "role": membership.role.value,
+        }
     }
 
 
@@ -326,8 +536,10 @@ async def join_company(
             )
 
         await inv_repo.update_status(invitation.id, InvitationStatus.ACCEPTED)
+        # Grant the role the admin chose at invite time (FR-011). Legacy invitations
+        # default to member via the column default, so behavior is unchanged for them.
         await company_repo.add_membership(
-            CompanyMembership(user_id=user_id, company_id=company_id, role=CompanyRole.MEMBER)
+            CompanyMembership(user_id=user_id, company_id=company_id, role=invitation.role)
         )
         await ob_repo.advance_step(user_id, "complete", company_join_method="joined")
 
@@ -344,7 +556,7 @@ async def join_company(
             "status": "joined",
             "company_id": str(company_id),
             "company_name": company.name,
-            "role": "member",
+            "role": invitation.role.value,
         }
 
     elif body.method == "domain_match":
@@ -379,9 +591,7 @@ async def join_company(
 
         if policy.policy == DomainPolicy.AUTO_JOIN:
             await company_repo.add_membership(
-                CompanyMembership(
-                    user_id=user_id, company_id=company_id, role=CompanyRole.MEMBER
-                )
+                CompanyMembership(user_id=user_id, company_id=company_id, role=CompanyRole.MEMBER)
             )
             await ob_repo.advance_step(user_id, "complete", company_join_method="joined")
 
@@ -411,9 +621,7 @@ async def join_company(
                     "company_name": company.name,
                 }
 
-            join_request = await jr_repo.create(
-                JoinRequest(user_id=user_id, company_id=company_id)
-            )
+            join_request = await jr_repo.create(JoinRequest(user_id=user_id, company_id=company_id))
 
             # Notify admin
             try:
@@ -457,9 +665,7 @@ async def join_company(
 
 
 @router.get("/companies/{company_id}/join-status")
-async def get_join_status(
-    company_id: UUID, user_info: CurrentUser, session: SessionDep
-) -> dict:
+async def get_join_status(company_id: UUID, user_info: CurrentUser, session: SessionDep) -> dict:
     user_id = UUID(user_info["sub"])
 
     jr_repo = SqlJoinRequestRepository(session)
@@ -474,17 +680,13 @@ async def get_join_status(
         membership = await company_repo.get_membership(user_id, company_id)
         if membership:
             return {"status": "approved", "company_name": company_name}
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="No join request found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No join request found")
 
     if join_req.status == JoinRequestStatus.PENDING:
         return {
             "status": "pending",
             "company_name": company_name,
-            "requested_at": (
-                join_req.requested_at.isoformat() if join_req.requested_at else None
-            ),
+            "requested_at": (join_req.requested_at.isoformat() if join_req.requested_at else None),
         }
     elif join_req.status == JoinRequestStatus.APPROVED:
         return {
@@ -519,9 +721,7 @@ async def cancel_join_request(
 
 
 @router.get("/companies/{company_id}/join-requests")
-async def list_join_requests(
-    company_id: UUID, user_info: CurrentUser, session: SessionDep
-) -> dict:
+async def list_join_requests(company_id: UUID, user_info: CurrentUser, session: SessionDep) -> dict:
     user_id = UUID(user_info["sub"])
 
     company_repo = SqlCompanyRepository(session)
@@ -563,9 +763,7 @@ async def approve_join_request(
     jr_repo = SqlJoinRequestRepository(session)
     join_req = await jr_repo.get_by_id(request_id)
     if join_req is None or join_req.company_id != company_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Join request not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Join request not found")
     if join_req.status != JoinRequestStatus.PENDING:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -576,9 +774,7 @@ async def approve_join_request(
 
     await jr_repo.decide(request_id, JoinRequestStatus.APPROVED, admin_id)
     await company_repo.add_membership(
-        CompanyMembership(
-            user_id=join_req.user_id, company_id=company_id, role=CompanyRole.MEMBER
-        )
+        CompanyMembership(user_id=join_req.user_id, company_id=company_id, role=CompanyRole.MEMBER)
     )
 
     ob_repo = SqlOnboardingRepository(session)
@@ -632,9 +828,7 @@ async def deny_join_request(
     jr_repo = SqlJoinRequestRepository(session)
     join_req = await jr_repo.get_by_id(request_id)
     if join_req is None or join_req.company_id != company_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Join request not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Join request not found")
     if join_req.status != JoinRequestStatus.PENDING:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -719,6 +913,7 @@ async def create_domain_policy(
     # Send verification email to verify@<domain>
     try:
         from itsdangerous import URLSafeTimedSerializer
+
         from tessera_api.adapters.email import FastMailEmailAdapter
         from tessera_api.config import get_settings
 
@@ -758,8 +953,9 @@ async def create_domain_policy(
 @router.get("/domain-verify/{token}")
 async def verify_domain(token: str, session: SessionDep) -> Response:
     """Public endpoint — no auth required. Validates a domain verification token."""
-    from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
     from fastapi.responses import RedirectResponse
+    from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+
     from tessera_api.config import get_settings
 
     settings = get_settings()

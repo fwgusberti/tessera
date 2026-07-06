@@ -2,6 +2,24 @@ import type { LoginResponse, RefreshResponse } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+/**
+ * Error thrown for a non-2xx API response. Extends `Error` (so existing
+ * `err instanceof Error` / `err.message` callers keep working) while also
+ * carrying the server's machine-readable `code` and HTTP `status` for callers
+ * that need to distinguish outcomes (e.g. already_member vs already_invited).
+ */
+export class ApiError extends Error {
+  code: string | null;
+  status: number;
+
+  constructor(message: string, code: string | null, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
 interface ApiConfig {
   getAccessToken(): string | null;
   refreshIfNeeded(): Promise<string>;
@@ -62,7 +80,7 @@ async function request<T>(path: string, options?: RequestInit, isRetry = false):
       throw new Error("Session expired. Please log in again.");
     }
     const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
-    throw new Error(err?.error?.message ?? res.statusText);
+    throw new ApiError(err?.error?.message ?? res.statusText, err?.error?.code ?? null, res.status);
   }
 
   if (res.status === 204) return undefined as T;

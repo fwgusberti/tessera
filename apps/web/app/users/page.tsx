@@ -3,13 +3,19 @@
 import { useEffect, useState } from "react";
 import { AuthGuard } from "@/lib/auth-guard";
 import { getCompanyMembers, type CompanyMember } from "@/lib/companies";
+import { useCompany } from "@/lib/company";
 import { CompanyRoleBadge } from "@/components/company/CompanyRoleBadge";
+import { AddUserPanel } from "@/components/company/AddUserPanel";
 
 export default function UsersPage() {
+  const { activeCompany } = useCompany();
+  const isAdmin = activeCompany?.role === "admin";
+
   const [members, setMembers] = useState<CompanyMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [denied, setDenied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAddPanel, setShowAddPanel] = useState(false);
 
   useEffect(() => {
     getCompanyMembers()
@@ -26,10 +32,31 @@ export default function UsersPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const handleMemberAdded = (member: CompanyMember) => {
+    // FR-013: a direct-added member appears in the roster in place (no reload).
+    setMembers((prev) =>
+      prev.some((m) => m.user_id === member.user_id) ? prev : [...prev, member]
+    );
+  };
+
   return (
     <AuthGuard>
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-slate-900">Users</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-slate-900">Users</h1>
+          {isAdmin && !denied && (
+            <button
+              onClick={() => setShowAddPanel((v) => !v)}
+              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md"
+            >
+              {showAddPanel ? "Close" : "Add user"}
+            </button>
+          )}
+        </div>
+
+        {isAdmin && showAddPanel && !denied && (
+          <AddUserPanel onMemberAdded={handleMemberAdded} />
+        )}
 
         {loading && <p className="text-sm text-slate-500">Loading users…</p>}
 

@@ -31,6 +31,9 @@ class InvitationModel(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    role: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="member", default="member"
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

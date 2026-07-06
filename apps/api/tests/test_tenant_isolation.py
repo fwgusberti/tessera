@@ -607,6 +607,154 @@ class TestCompanyMembersIsolation:
         mock_repo.list_members.assert_awaited_once_with(company_a_id)
 
 
+class TestCompanyAddUserIsolation:
+    """Feature 054: add-user writes land only in the admin's active company.
+
+    ``company_id`` flows solely from ``CompanyAdminContext`` — never from client
+    input — so an admin of Company A can only ever create memberships/invitations in
+    A, even when the target user is already a member of Company B. The directory
+    search excludes A's members and returns identity fields only.
+    """
+
+    def test_add_user_membership_created_in_active_company_only(self, admin_company_setup):
+        """POST /companies/members as A's admin binds the membership to A, never B."""
+        token_a, company_a_id, _tb, company_b_id = admin_company_setup
+        target_id = uuid.uuid4()
+
+        from tessera_core.domain.entities import User
+
+        target = User(
+            id=target_id, external_subject="sub-t", email="t@x.test",
+            display_name="Target", is_admin=False,
+        )
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_co_cls,
+                patch("tessera_api.routers.companies.SqlUserRepository") as mock_user_cls,
+                patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
+            ):
+                mock_co = AsyncMock()
+                mock_co.get_membership = AsyncMock(return_value=None)
+                mock_co.add_membership = AsyncMock(
+                    side_effect=lambda m: CompanyMembership(
+                        id=uuid.uuid4(), user_id=m.user_id, company_id=m.company_id,
+                        role=m.role, joined_at=datetime.now(UTC),
+                    )
+                )
+                mock_co_cls.return_value = mock_co
+
+                mock_user = AsyncMock()
+                mock_user.get_by_id = AsyncMock(return_value=target)
+                mock_user_cls.return_value = mock_user
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    resp = client.post(
+                        "/v1/companies/members",
+                        json={"user_id": str(target_id)},
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert resp.status_code == 201, resp.text
+        written = mock_co.add_membership.await_args.args[0]
+        assert written.company_id == company_a_id
+        assert written.company_id != company_b_id
+
+    def test_add_user_already_in_company_b_lands_only_in_a(self, admin_company_setup):
+        """A user who is a member of B (not A) is added to A; the write targets A only."""
+        token_a, company_a_id, _tb, company_b_id = admin_company_setup
+        target_id = uuid.uuid4()
+
+        from tessera_core.domain.entities import User
+
+        target = User(
+            id=target_id, external_subject="sub-b", email="b@x.test",
+            display_name="Beta Member", is_admin=False,
+        )
+
+        # get_membership(target, A) → None (not a member of A). The router only ever
+        # queries/writes with the context company id (A), so B is never touched.
+        def _membership_lookup(uid, cid):
+            return None
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_co_cls,
+                patch("tessera_api.routers.companies.SqlUserRepository") as mock_user_cls,
+                patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
+            ):
+                mock_co = AsyncMock()
+                mock_co.get_membership = AsyncMock(side_effect=_membership_lookup)
+                mock_co.add_membership = AsyncMock(
+                    side_effect=lambda m: CompanyMembership(
+                        id=uuid.uuid4(), user_id=m.user_id, company_id=m.company_id,
+                        role=m.role, joined_at=datetime.now(UTC),
+                    )
+                )
+                mock_co_cls.return_value = mock_co
+
+                mock_user = AsyncMock()
+                mock_user.get_by_id = AsyncMock(return_value=target)
+                mock_user_cls.return_value = mock_user
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    resp = client.post(
+                        "/v1/companies/members",
+                        json={"user_id": str(target_id)},
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert resp.status_code == 201
+        written = mock_co.add_membership.await_args.args[0]
+        assert written.company_id == company_a_id
+        # every membership lookup used the active company id, never B
+        for call in mock_co.get_membership.await_args_list:
+            assert call.args[1] == company_a_id
+
+    def test_addable_users_scoped_to_active_company_identity_only(self, admin_company_setup):
+        """GET /companies/addable-users as A's admin scopes the search to A and leaks
+        only identity fields — never B's roster."""
+        token_a, company_a_id, _tb, company_b_id = admin_company_setup
+        from tessera_core.domain.company_member_match import CompanyMemberMatch
+
+        match_id = uuid.uuid4()
+
+        with _bypass_onboarding_guard():
+            with patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_co_cls:
+                mock_co = AsyncMock()
+                mock_co.search_addable_users = AsyncMock(
+                    return_value=[
+                        CompanyMemberMatch(user_id=match_id, display_name="Ada", email="ada@x.test")
+                    ]
+                )
+                mock_co_cls.return_value = mock_co
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    resp = client.get(
+                        "/v1/companies/addable-users?q=ad",
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert resp.status_code == 200
+        # search scoped to the active company id, from context only
+        assert mock_co.search_addable_users.await_args.args[0] == company_a_id
+        users = resp.json()["users"]
+        # identity fields only — no company_id / membership / other-company data
+        assert users == [{"user_id": str(match_id), "display_name": "Ada", "email": "ada@x.test"}]
+        for u in users:
+            assert set(u.keys()) == {"user_id", "display_name", "email"}
+        assert str(company_b_id) not in resp.text
+
+
 class TestUS1ProposalIsolation:
     """US1: proposals are scoped to the document's company; cross-company is denied."""
 

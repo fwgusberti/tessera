@@ -67,6 +67,9 @@ class TestListMembersPortContract:
             async def search_members_for_space(self, cid, space_id, query, limit=20):
                 raise NotImplementedError  # pragma: no cover - unused
 
+            async def search_addable_users(self, cid, query, limit=20):
+                raise NotImplementedError  # pragma: no cover - unused
+
             async def list_members(self, cid):
                 rows = {
                     company_id: [grace, ada],

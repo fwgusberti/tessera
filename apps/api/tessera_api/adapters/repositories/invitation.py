@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tessera_api.adapters.models.invitation import InvitationModel
+from tessera_core.domain.company_role import CompanyRole
 from tessera_core.domain.invitation import Invitation
 from tessera_core.domain.invitation_status import InvitationStatus
 from tessera_core.ports.repositories.invitation import InvitationRepository
@@ -20,6 +21,9 @@ def _invitation_from_model(m: InvitationModel) -> Invitation:
         email=m.email,
         token_hash=m.token_hash,
         status=InvitationStatus(m.status),
+        # Legacy/pre-0015 rows and unrefreshed instances have no role → member
+        # (matches the column's server default).
+        role=CompanyRole(m.role) if m.role else CompanyRole.MEMBER,
         expires_at=m.expires_at,
         created_at=m.created_at,
         accepted_at=m.accepted_at,
@@ -38,6 +42,7 @@ class SqlInvitationRepository(InvitationRepository):
             email=invitation.email,
             token_hash=invitation.token_hash,
             status=invitation.status.value,
+            role=invitation.role.value,
             expires_at=invitation.expires_at,
             accepted_at=invitation.accepted_at,
         )
@@ -55,6 +60,7 @@ class SqlInvitationRepository(InvitationRepository):
                 email=inv.email,
                 token_hash=inv.token_hash,
                 status=inv.status.value,
+                role=inv.role.value,
                 expires_at=inv.expires_at,
                 accepted_at=inv.accepted_at,
             )

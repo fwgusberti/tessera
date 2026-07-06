@@ -115,6 +115,30 @@ class SqlCompanyRepository(CompanyRepository):
             for u in result.scalars().all()
         ]
 
+    async def search_addable_users(
+        self, company_id: UUID, query: str, limit: int = 20
+    ) -> list[CompanyMemberMatch]:
+        pattern = f"%{query}%"
+        # Users already in this company are excluded; the search spans the global
+        # users table (identity), never another tenant's owned data.
+        excluded = select(CompanyMembershipModel.user_id).where(
+            CompanyMembershipModel.company_id == company_id
+        )
+        stmt = (
+            select(UserModel)
+            .where(
+                or_(UserModel.email.ilike(pattern), UserModel.display_name.ilike(pattern)),
+                UserModel.id.notin_(excluded),
+            )
+            .order_by(UserModel.display_name)
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return [
+            CompanyMemberMatch(user_id=u.id, display_name=u.display_name, email=u.email)
+            for u in result.scalars().all()
+        ]
+
     async def list_members(self, company_id: UUID) -> list[CompanyMemberListing]:
         stmt = (
             select(

@@ -31,6 +31,17 @@ class CompanyRepository(ABC):
         ...
 
     @abstractmethod
+    async def search_addable_users(
+        self, company_id: UUID, query: str, limit: int = 20
+    ) -> list[CompanyMemberMatch]:
+        """Search the global user directory for people not already in ``company_id``.
+
+        Matches ``display_name``/``email`` case-insensitively, excludes current
+        members of ``company_id``, and returns identity fields only.
+        """
+        ...
+
+    @abstractmethod
     async def list_members(self, company_id: UUID) -> list[CompanyMemberListing]:
         """List every member of the company with their company role, ordered by display name."""
         ...

@@ -16,6 +16,11 @@ vi.mock("@/lib/auth", () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+// --- company context mock (member → no admin affordance) ---
+vi.mock("@/lib/company", () => ({
+  useCompany: () => ({ activeCompany: { id: "c1", name: "Acme", role: "member" } }),
+}));
+
 // --- companies lib mock ---
 vi.mock("@/lib/companies", () => ({
   getCompanyMembers: vi.fn(),
@@ -56,6 +61,8 @@ describe("User Management page", () => {
     // Role badges render the human labels.
     expect(screen.getByText("administrator")).toBeInTheDocument();
     expect(screen.getByText("member")).toBeInTheDocument();
+    // US4: the active-company role here is "member" → no admin add affordance.
+    expect(screen.queryByRole("button", { name: /add user/i })).not.toBeInTheDocument();
   });
 
   it("falls back to email when display_name is empty", async () => {

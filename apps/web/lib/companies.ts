@@ -111,3 +111,42 @@ export async function getCompanyMembers(): Promise<CompanyMember[]> {
   const res = await api.get<{ members: CompanyMember[] }>("/v1/companies/members");
   return res.members;
 }
+
+export type CompanyRole = "admin" | "member";
+
+export interface InviteCompanyMemberResponse {
+  status: "sent";
+  email: string;
+  role: CompanyRole;
+}
+
+export async function inviteCompanyMember(
+  email: string,
+  role: CompanyRole
+): Promise<InviteCompanyMemberResponse> {
+  return api.post<InviteCompanyMemberResponse>("/v1/companies/invitations", { email, role });
+}
+
+export interface AddableUser {
+  user_id: string;
+  display_name: string;
+  email: string;
+}
+
+export async function searchAddableUsers(q: string): Promise<AddableUser[]> {
+  const res = await api.get<{ users: AddableUser[] }>(
+    `/v1/companies/addable-users?q=${encodeURIComponent(q)}`
+  );
+  return res.users;
+}
+
+export async function addCompanyMember(
+  userId: string,
+  role: CompanyRole
+): Promise<CompanyMember> {
+  const res = await api.post<{ member: CompanyMember }>("/v1/companies/members", {
+    user_id: userId,
+    role,
+  });
+  return res.member;
+}
