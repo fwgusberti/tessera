@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/054-add-company-user/plan.md
+at specs/055-domain-company-join/plan.md
 <!-- SPECKIT END -->

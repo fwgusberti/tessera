@@ -13,6 +13,7 @@ from tessera_core.domain.document_lifecycle_state import DocumentLifecycleState
 from tessera_core.domain.document_version import DocumentVersion
 from tessera_core.domain.domain_join_policy import DomainJoinPolicy
 from tessera_core.domain.domain_policy_enum import DomainPolicy
+from tessera_core.domain.email_domain import extract_domain, is_public_email_domain
 from tessera_core.domain.invitation import Invitation
 from tessera_core.domain.invitation_status import InvitationStatus
 from tessera_core.domain.join_request import JoinRequest
@@ -47,6 +48,8 @@ __all__ = [
     "DomainJoinPolicy",
     "DomainPolicy",
     "Invitation",
+    "extract_domain",
+    "is_public_email_domain",
     "InvitationStatus",
     "JoinRequest",
     "JoinRequestStatus",

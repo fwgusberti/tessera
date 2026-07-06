@@ -113,7 +113,9 @@ class TestCreateCompany:
                 response = client.post(
                     "/v1/companies",
                     json={"name": "Acme Corp", "industry": "Technology", "team_size": "11-50"},
-                    headers=_make_jwt_header(user_id),
+                    # Public founder domain → no domain auto-association side effect
+                    # (US3), keeping this contract test focused on creation itself.
+                    headers=_make_jwt_header(user_id, email="founder@gmail.com"),
                 )
 
         assert response.status_code == 201

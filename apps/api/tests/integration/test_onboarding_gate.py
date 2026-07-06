@@ -118,7 +118,8 @@ class TestOnboardingGateExemptions:
                 response = client.post(
                     "/v1/companies",
                     json={"name": "Gate Test Co"},
-                    headers=_make_jwt_header(user_id),
+                    # Public founder domain → no domain auto-association side effect.
+                    headers=_make_jwt_header(user_id, email="founder@gmail.com"),
                 )
 
         assert response.status_code == 201, (
@@ -269,7 +270,8 @@ class TestAdminInvariantAfterEnrollment:
                 response = client.post(
                     "/v1/companies",
                     json={"name": "Invariant Test Co"},
-                    headers=_make_jwt_header(user_id),
+                    # Public founder domain → no domain auto-association side effect.
+                    headers=_make_jwt_header(user_id, email="founder@gmail.com"),
                 )
 
         assert response.status_code == 201, (

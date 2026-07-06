@@ -34,6 +34,8 @@ from tessera_core.domain.entities import (
     InvitationStatus,
     JoinRequest,
     JoinRequestStatus,
+    extract_domain,
+    is_public_email_domain,
 )
 
 router = APIRouter(tags=["companies"])
@@ -395,6 +397,41 @@ async def create_company(
         entity_type="company",
         entity_id=company.id,
     )
+
+    # Domain auto-association side effect (US3): make the company matchable by the
+    # founder's email domain when it is a real (non-public) work domain that no
+    # other company has already claimed. Marking it verified lights up the existing
+    # suggestions/join code paths; the admin-approval gate is the safety net. This
+    # is best-effort — company creation must never fail because of it.
+    email = user_info.get("email", "")
+    founder_domain = extract_domain(email)
+    if founder_domain and not is_public_email_domain(founder_domain):
+        domain_repo = SqlDomainPolicyRepository(session)
+        if await domain_repo.get_by_domain(founder_domain) is None:
+            try:
+                async with session.begin_nested():
+                    await domain_repo.create(
+                        DomainJoinPolicy(
+                            company_id=company.id,
+                            domain=founder_domain,
+                            policy=DomainPolicy.REQUEST_APPROVAL,
+                            verified=True,
+                        )
+                    )
+                    await write_audit(
+                        session,
+                        actor_type="user",
+                        actor_id=user_id,
+                        action="company.domain_auto_associated",
+                        entity_type="company",
+                        entity_id=company.id,
+                        metadata={"company_id": str(company.id), "domain": founder_domain},
+                    )
+            except IntegrityError:
+                # A concurrent creation claimed this domain first (unique index).
+                # The savepoint rolls back only the policy write; the new company
+                # is simply not matchable by that domain and creation proceeds.
+                pass
 
     from tessera_api.auth.jwt_auth import create_access_token
 
@@ -881,6 +918,20 @@ async def create_domain_policy(
     user_id = UUID(user_info["sub"])
 
     domain = body.domain.lower().lstrip("@")
+
+    # Reject public / free email-provider domains outright (FR-010, defense in
+    # depth): a company must never claim gmail.com/outlook.com/etc. Guard runs
+    # before any DB write or verification email.
+    if is_public_email_domain(domain):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": {
+                    "code": "public_domain_not_allowed",
+                    "message": f"{domain} is a public email provider and cannot be claimed",
+                }
+            },
+        )
 
     company_repo = SqlCompanyRepository(session)
     await _require_company_admin(user_id, company_id, company_repo)
