@@ -1,13 +1,37 @@
 """Integration tests for onboarding endpoints.
 
-Tests use TestClient with mocked repositories (no real DB required).
+Tests use TestClient with mocked repositories (no real DB required). The DB
+session is supplied through a dependency override (``_with_db``) rather than
+patching a module-level ``get_db``, matching the current ``SessionDep`` wiring.
 """
 
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+
+@contextmanager
+def _with_db(mock_session=None):
+    """Override get_db via dependency injection so no real DB is touched."""
+    from tessera_api.adapters.database import get_db
+    from tessera_api.main import app
+
+    if mock_session is None:
+        mock_session = AsyncMock()
+
+    async def _gen():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = _gen
+    try:
+        yield mock_session
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 def _make_jwt_header(user_id: uuid.UUID | None = None) -> dict:
@@ -36,23 +60,36 @@ def _make_progress(user_id: uuid.UUID | None = None, **kwargs):
     return OnboardingProgress(**defaults)
 
 
+def _membership(user_id: uuid.UUID):
+    from tessera_core.domain.entities import CompanyMembership, CompanyRole
+
+    return CompanyMembership(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        company_id=uuid.uuid4(),
+        role=CompanyRole.MEMBER,
+        joined_at=datetime.now(UTC),
+    )
+
+
 class TestGetOnboardingStatus:
     def test_returns_status_for_new_user(self):
-        """GET /v1/onboarding/status returns initial state for a new user."""
+        """GET /v1/onboarding/status returns initial state for a new user (no membership)."""
         user_id = uuid.uuid4()
         progress = _make_progress(user_id=user_id)
 
         with (
-            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            _with_db(),
             patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_repo_cls,
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_repo = AsyncMock()
             mock_repo.get_by_user_id = AsyncMock(return_value=progress)
             mock_repo_cls.return_value = mock_repo
+
+            mock_co = AsyncMock()
+            mock_co.list_memberships_for_user = AsyncMock(return_value=[])
+            mock_co_cls.return_value = mock_co
 
             from fastapi.testclient import TestClient
             from tessera_api.main import app
@@ -82,16 +119,17 @@ class TestGetOnboardingStatus:
         )
 
         with (
-            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            _with_db(),
             patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_repo_cls,
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_repo = AsyncMock()
             mock_repo.get_by_user_id = AsyncMock(return_value=progress)
             mock_repo_cls.return_value = mock_repo
+
+            mock_co = AsyncMock()
+            mock_co.list_memberships_for_user = AsyncMock(return_value=[])
+            mock_co_cls.return_value = mock_co
 
             from fastapi.testclient import TestClient
             from tessera_api.main import app
@@ -113,17 +151,18 @@ class TestGetOnboardingStatus:
         progress = _make_progress(user_id=user_id)
 
         with (
-            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            _with_db(),
             patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_repo_cls,
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_repo = AsyncMock()
             mock_repo.get_by_user_id = AsyncMock(return_value=None)
             mock_repo.create = AsyncMock(return_value=progress)
             mock_repo_cls.return_value = mock_repo
+
+            mock_co = AsyncMock()
+            mock_co.list_memberships_for_user = AsyncMock(return_value=[])
+            mock_co_cls.return_value = mock_co
 
             from fastapi.testclient import TestClient
             from tessera_api.main import app
@@ -146,6 +185,148 @@ class TestGetOnboardingStatus:
             response = client.get("/v1/onboarding/status")
         assert response.status_code == 401
 
+    def test_member_with_null_completed_at_reports_completed_true(self):
+        """T005/US1: a member whose completed_at IS NULL reports completed=true (contract C3)."""
+        user_id = uuid.uuid4()
+        progress = _make_progress(
+            user_id=user_id,
+            completed_steps=["profile"],
+            current_step="company",
+            company_join_method=None,
+            completed_at=None,  # admin-added member never ran /onboarding/complete
+        )
+
+        with (
+            _with_db(),
+            patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_repo_cls,
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
+        ):
+            mock_repo = AsyncMock()
+            mock_repo.get_by_user_id = AsyncMock(return_value=progress)
+            mock_repo_cls.return_value = mock_repo
+
+            mock_co = AsyncMock()
+            mock_co.list_memberships_for_user = AsyncMock(return_value=[_membership(user_id)])
+            mock_co_cls.return_value = mock_co
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.get(
+                    "/v1/onboarding/status",
+                    headers=_make_jwt_header(user_id),
+                )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["completed"] is True, "membership satisfies onboarding, null completed_at"
+        # Stored progress fields still surface from OnboardingProgress.
+        assert body["current_step"] == "company"
+
+    @pytest.mark.parametrize("join_method", ["created", "joined"])
+    def test_membership_is_authoritative_across_join_paths(self, join_method):
+        """T012/US2 (FR-005): self-create and approve-join members report completed=true
+        via the membership branch even when completed_at is forced null."""
+        user_id = uuid.uuid4()
+        progress = _make_progress(
+            user_id=user_id,
+            completed_steps=["profile", "company"],
+            current_step="invite",
+            company_join_method=join_method,
+            completed_at=None,  # forced null — membership, not this field, is authoritative
+        )
+
+        with (
+            _with_db(),
+            patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_repo_cls,
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
+        ):
+            mock_repo = AsyncMock()
+            mock_repo.get_by_user_id = AsyncMock(return_value=progress)
+            mock_repo_cls.return_value = mock_repo
+
+            mock_co = AsyncMock()
+            mock_co.list_memberships_for_user = AsyncMock(return_value=[_membership(user_id)])
+            mock_co_cls.return_value = mock_co
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.get(
+                    "/v1/onboarding/status",
+                    headers=_make_jwt_header(user_id),
+                )
+
+        assert response.status_code == 200
+        assert response.json()["completed"] is True
+
+    def test_no_membership_null_completed_at_reports_completed_false(self):
+        """T013/US2 (FR-007): a company-less user with null completed_at reports completed=false."""
+        user_id = uuid.uuid4()
+        progress = _make_progress(user_id=user_id, completed_at=None)
+
+        with (
+            _with_db(),
+            patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_repo_cls,
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
+        ):
+            mock_repo = AsyncMock()
+            mock_repo.get_by_user_id = AsyncMock(return_value=progress)
+            mock_repo_cls.return_value = mock_repo
+
+            mock_co = AsyncMock()
+            mock_co.list_memberships_for_user = AsyncMock(return_value=[])
+            mock_co_cls.return_value = mock_co
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.get(
+                    "/v1/onboarding/status",
+                    headers=_make_jwt_header(user_id),
+                )
+
+        assert response.status_code == 200
+        assert response.json()["completed"] is False
+
+    def test_pre_fix_trapped_member_status_recovers(self):
+        """T015/US3: a pre-fix trapped member (membership + null completed_at) reports
+        completed=true via the derive-from-membership path — no backfill."""
+        user_id = uuid.uuid4()
+        progress = _make_progress(
+            user_id=user_id,
+            company_join_method=None,
+            completed_at=None,
+        )
+
+        with (
+            _with_db(),
+            patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_repo_cls,
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
+        ):
+            mock_repo = AsyncMock()
+            mock_repo.get_by_user_id = AsyncMock(return_value=progress)
+            mock_repo_cls.return_value = mock_repo
+
+            mock_co = AsyncMock()
+            mock_co.list_memberships_for_user = AsyncMock(return_value=[_membership(user_id)])
+            mock_co_cls.return_value = mock_co
+
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                response = client.get(
+                    "/v1/onboarding/status",
+                    headers=_make_jwt_header(user_id),
+                )
+
+        assert response.status_code == 200
+        assert response.json()["completed"] is True
+
 
 class TestPostOnboardingProfile:
     def test_saves_profile_advances_step(self):
@@ -158,15 +339,11 @@ class TestPostOnboardingProfile:
         )
 
         with (
-            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            _with_db(),
             patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
             patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
             patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_ob = AsyncMock()
             mock_ob.get_by_user_id = AsyncMock(return_value=_make_progress(user_id=user_id))
             mock_ob.advance_step = AsyncMock(return_value=after_progress)
@@ -216,15 +393,11 @@ class TestPostOnboardingProfile:
         )
 
         with (
-            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            _with_db(),
             patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
             patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
             patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_ob = AsyncMock()
             mock_ob.get_by_user_id = AsyncMock(return_value=_make_progress(user_id=user_id))
             mock_ob.advance_step = AsyncMock(return_value=after_progress)
@@ -261,15 +434,11 @@ class TestPostOnboardingComplete:
         )
 
         with (
-            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            _with_db(),
             patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
             patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
             patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_ob = AsyncMock()
             mock_ob.complete = AsyncMock(return_value=completed_progress)
             mock_ob_cls.return_value = mock_ob
@@ -317,16 +486,12 @@ class TestPostOnboardingComplete:
         )
 
         with (
-            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            _with_db(),
             patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
             patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
             patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
             patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_ob = AsyncMock()
             mock_ob.complete = AsyncMock(return_value=completed_progress)
             mock_ob_cls.return_value = mock_ob
@@ -372,16 +537,12 @@ class TestPostOnboardingComplete:
         )
 
         with (
-            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            _with_db(),
             patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
             patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
             patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
             patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_ob = AsyncMock()
             mock_ob.complete = AsyncMock(return_value=completed_progress)
             mock_ob_cls.return_value = mock_ob
@@ -422,16 +583,12 @@ class TestPostOnboardingComplete:
         )
 
         with (
-            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            _with_db(),
             patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
             patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
             patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
             patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_ob = AsyncMock()
             mock_ob.complete = AsyncMock(return_value=completed_progress)
             mock_ob_cls.return_value = mock_ob
@@ -472,16 +629,12 @@ class TestPostOnboardingComplete:
         )
 
         with (
-            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            _with_db(),
             patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
             patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
             patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
             patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_ob = AsyncMock()
             mock_ob.complete = AsyncMock(return_value=completed_progress)
             mock_ob_cls.return_value = mock_ob
@@ -526,16 +679,12 @@ class TestPostOnboardingComplete:
         )
 
         with (
-            patch("tessera_api.routers.onboarding.get_db") as mock_get_db,
+            _with_db(),
             patch("tessera_api.routers.onboarding.SqlOnboardingRepository") as mock_ob_cls,
             patch("tessera_api.routers.onboarding.SqlCompanyRepository") as mock_co_cls,
             patch("tessera_api.routers.onboarding.SqlUserRepository") as mock_user_cls,
             patch("tessera_api.routers.onboarding.write_audit", new_callable=AsyncMock),
         ):
-            mock_session = AsyncMock()
-            mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_ob = AsyncMock()
             mock_ob.complete = AsyncMock(return_value=completed_progress)
             mock_ob_cls.return_value = mock_ob

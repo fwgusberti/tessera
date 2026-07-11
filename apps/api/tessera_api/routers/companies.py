@@ -20,6 +20,8 @@ from tessera_api.adapters.repo import (
     SqlInvitationRepository,
     SqlJoinRequestRepository,
     SqlOnboardingRepository,
+    SqlSpaceMembershipRepository,
+    SqlSpaceRepository,
     SqlUserRepository,
 )
 from tessera_api.auth.oidc import CompanyAdminContext, CurrentUser
@@ -34,9 +36,11 @@ from tessera_core.domain.entities import (
     InvitationStatus,
     JoinRequest,
     JoinRequestStatus,
+    OnboardingProgress,
     extract_domain,
     is_public_email_domain,
 )
+from tessera_core.services.member_access import MemberAccessService
 
 router = APIRouter(tags=["companies"])
 
@@ -156,6 +160,70 @@ async def list_company_members(ctx: CompanyAdminContext, session: SessionDep) ->
             }
             for m in members
         ]
+    }
+
+
+@router.get("/companies/members/{user_id}/space-access")
+async def get_member_space_access(
+    user_id: UUID, ctx: CompanyAdminContext, session: SessionDep
+) -> dict:
+    """Member-centric space access view: every company space with the target
+    member's direct/effective role (feature 058, FR-001).
+
+    ``company_id`` derives solely from ``CompanyAdminContext`` (Principle VI).
+    A ``user_id`` with no membership in the active company returns a generic 404
+    indistinguishable from absent — cross-company probes additionally leave a
+    ``cross_tenant_denied`` audit record (053/054 convention).
+    """
+    user_info, company_id, _membership = ctx
+    admin_id = UUID(user_info["sub"])
+
+    company_repo = SqlCompanyRepository(session)
+    user_repo = SqlUserRepository(session)
+
+    target_membership = await company_repo.get_membership(user_id, company_id)
+    target = await user_repo.get_by_id(user_id)
+    if target_membership is None or target is None:
+        if target is not None:
+            # The user exists but belongs to another company — audit the probe.
+            await write_audit(
+                session,
+                actor_type="user",
+                actor_id=admin_id,
+                action="cross_tenant_denied",
+                entity_type="user",
+                entity_id=user_id,
+                metadata={"company_id": str(company_id)},
+            )
+            await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "not_found", "message": "Not found"}},
+        )
+
+    svc = MemberAccessService(SqlSpaceRepository(session), SqlSpaceMembershipRepository(session))
+    rows = await svc.space_access_for_member(user_id, company_id)
+
+    return {
+        "member": {
+            "user_id": str(target.id),
+            "display_name": target.display_name,
+            "email": target.email,
+        },
+        "spaces": [
+            {
+                "id": str(r.space.id),
+                "name": r.space.name,
+                "slug": r.space.slug,
+                "parent_space_id": (
+                    str(r.space.parent_space_id) if r.space.parent_space_id else None
+                ),
+                "direct_role": r.direct_role.value if r.direct_role else None,
+                "effective_role": r.effective_role.value if r.effective_role else None,
+                "is_direct": r.is_direct,
+            }
+            for r in rows
+        ],
     }
 
 
@@ -341,6 +409,27 @@ async def add_company_member(
         entity_type="company_membership",
         entity_id=membership.id,
         metadata={"company_id": str(company_id), "user_id": str(body.user_id)},
+    )
+
+    # Persist the target's onboarding completion so stored state stays truthful
+    # (mirrors the approve-join path). Membership already satisfies both gates, but
+    # marking the OnboardingProgress complete + emitting an audit keeps the record
+    # accurate (FR-003). Idempotent: re-adding refreshes without error.
+    ob_repo = SqlOnboardingRepository(session)
+    if await ob_repo.get_by_user_id(body.user_id) is None:
+        await ob_repo.create(OnboardingProgress(user_id=body.user_id))
+    await ob_repo.advance_step(
+        body.user_id, "complete", company_join_method="added", company_id=company_id
+    )
+    await ob_repo.complete(body.user_id)
+
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=admin_id,
+        action="onboarding.completed",
+        entity_type="user",
+        entity_id=body.user_id,
     )
 
     return {

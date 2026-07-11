@@ -23,9 +23,40 @@ class SpaceHierarchyService:
         self._spaces = space_repo
         self._memberships = membership_repo
 
-    async def list_accessible(self, user_id: UUID, company_id: UUID) -> list[SpaceAccess]:
-        """Return all SpaceAccess objects for the user in the given company."""
-        return await self._spaces.list_accessible_by_user(user_id, company_id)
+    async def list_accessible(
+        self, user_id: UUID, company_id: UUID, is_company_admin: bool = False
+    ) -> list[SpaceAccess]:
+        """Return all SpaceAccess objects for the user in the given company.
+
+        Company admins additionally see every remaining company space as implicit
+        ``SpaceAccess(effective_role=ADMIN, is_direct=False)`` — the read-side
+        expression of the implicit-admin rule (feature 036). Membership-derived
+        accesses are passed through unchanged. Both source queries are scoped to
+        ``company_id``, so no cross-company space can surface (Constitution VI).
+        """
+        accesses = await self._spaces.list_accessible_by_user(user_id, company_id)
+        if not is_company_admin:
+            return accesses
+
+        covered = {a.space.id for a in accesses}
+        company_spaces = await self._spaces.list_by_company(company_id)
+        implicit = [
+            SpaceAccess(space=space, effective_role=SpaceRole.ADMIN, is_direct=False)
+            for space in company_spaces
+            if space.id not in covered
+        ]
+        return accesses + implicit
+
+    async def get_access(
+        self,
+        user_id: UUID,
+        space_id: UUID,
+        company_id: UUID,
+        is_company_admin: bool = False,
+    ) -> SpaceAccess | None:
+        """Return the user's access to a single space, honoring the admin branch."""
+        accesses = await self.list_accessible(user_id, company_id, is_company_admin)
+        return next((a for a in accesses if a.space.id == space_id), None)
 
     async def set_parent(
         self,

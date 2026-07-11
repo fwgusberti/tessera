@@ -12,6 +12,7 @@ from tessera_api.adapters.database import SessionDep
 from tessera_api.adapters.repo import SqlCompanyRepository, SqlOnboardingRepository, SqlUserRepository
 from tessera_api.auth.oidc import CurrentUser
 from tessera_core.domain.entities import CompanyMembership, CompanyRole, OnboardingProgress
+from tessera_core.domain.onboarding_progress import has_completed_onboarding
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
@@ -46,9 +47,11 @@ class CompleteResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _status_response(progress: OnboardingProgress) -> dict:
+def _status_response(progress: OnboardingProgress, has_company_membership: bool) -> dict:
     return {
-        "completed": progress.completed_at is not None,
+        # Membership is authoritative for "onboarding satisfied" — a member reports
+        # completed=true even when completed_at is null (admin-added / recovery path).
+        "completed": has_completed_onboarding(progress, has_company_membership),
         "current_step": progress.current_step,
         "completed_steps": progress.completed_steps,
         "company_join_method": progress.company_join_method,
@@ -71,9 +74,9 @@ async def _get_or_create_progress(
 @router.get("/status")
 async def get_status(user_info: CurrentUser, session: SessionDep) -> dict:
     user_id = UUID(user_info["sub"])
-    repo = SqlOnboardingRepository(session)
-    progress = await _get_or_create_progress(user_id, repo)
-    return _status_response(progress)
+    progress = await _get_or_create_progress(user_id, SqlOnboardingRepository(session))
+    memberships = await SqlCompanyRepository(session).list_memberships_for_user(user_id)
+    return _status_response(progress, has_company_membership=bool(memberships))
 
 
 @router.post("/profile")

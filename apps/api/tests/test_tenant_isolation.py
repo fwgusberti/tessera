@@ -632,6 +632,7 @@ class TestCompanyAddUserIsolation:
             with (
                 patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_co_cls,
                 patch("tessera_api.routers.companies.SqlUserRepository") as mock_user_cls,
+                patch("tessera_api.routers.companies.SqlOnboardingRepository") as mock_ob_cls,
                 patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
             ):
                 mock_co = AsyncMock()
@@ -648,6 +649,10 @@ class TestCompanyAddUserIsolation:
                 mock_user.get_by_id = AsyncMock(return_value=target)
                 mock_user_cls.return_value = mock_user
 
+                mock_ob = AsyncMock()
+                mock_ob.get_by_user_id = AsyncMock(return_value=None)
+                mock_ob_cls.return_value = mock_ob
+
                 from fastapi.testclient import TestClient
                 from tessera_api.main import app
 
@@ -662,6 +667,9 @@ class TestCompanyAddUserIsolation:
         written = mock_co.add_membership.await_args.args[0]
         assert written.company_id == company_a_id
         assert written.company_id != company_b_id
+        # The onboarding completion write targets only the added user's own row,
+        # scoped to the active company — never company B.
+        assert mock_ob.advance_step.await_args.kwargs["company_id"] == company_a_id
 
     def test_add_user_already_in_company_b_lands_only_in_a(self, admin_company_setup):
         """A user who is a member of B (not A) is added to A; the write targets A only."""
@@ -684,6 +692,7 @@ class TestCompanyAddUserIsolation:
             with (
                 patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_co_cls,
                 patch("tessera_api.routers.companies.SqlUserRepository") as mock_user_cls,
+                patch("tessera_api.routers.companies.SqlOnboardingRepository") as mock_ob_cls,
                 patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
             ):
                 mock_co = AsyncMock()
@@ -699,6 +708,10 @@ class TestCompanyAddUserIsolation:
                 mock_user = AsyncMock()
                 mock_user.get_by_id = AsyncMock(return_value=target)
                 mock_user_cls.return_value = mock_user
+
+                mock_ob = AsyncMock()
+                mock_ob.get_by_user_id = AsyncMock(return_value=None)
+                mock_ob_cls.return_value = mock_ob
 
                 from fastapi.testclient import TestClient
                 from tessera_api.main import app
@@ -753,6 +766,165 @@ class TestCompanyAddUserIsolation:
         for u in users:
             assert set(u.keys()) == {"user_id", "display_name", "email"}
         assert str(company_b_id) not in resp.text
+
+
+class TestMemberSpaceAccessIsolation:
+    """Feature 058: the member-centric space-access view is admin-gated and
+    company-scoped — a cross-company ``user_id`` is indistinguishable from absent
+    and leaves a ``cross_tenant_denied`` audit record; non-admins are refused."""
+
+    def test_cross_company_member_probe_denied_and_audited(self, admin_company_setup):
+        """Company A admin requests space-access of a Company B member → 404, no data."""
+        token_a, company_a_id, _tb, company_b_id = admin_company_setup
+        beta_member_id = uuid.uuid4()
+
+        from tessera_core.domain.entities import User
+
+        beta_user = User(
+            id=beta_member_id, external_subject="sub-beta", email="beta@beta.test",
+            display_name="Beta Member", is_admin=False,
+        )
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.companies.SqlCompanyRepository") as mock_co_cls,
+                patch("tessera_api.routers.companies.SqlUserRepository") as mock_user_cls,
+                patch("tessera_api.routers.companies.SqlSpaceRepository") as mock_space_cls,
+                patch(
+                    "tessera_api.routers.companies.write_audit", new_callable=AsyncMock
+                ) as mock_audit,
+            ):
+                mock_co = AsyncMock()
+                # the target holds no membership in the caller's active company
+                mock_co.get_membership = AsyncMock(return_value=None)
+                mock_co_cls.return_value = mock_co
+
+                mock_user = AsyncMock()
+                mock_user.get_by_id = AsyncMock(return_value=beta_user)
+                mock_user_cls.return_value = mock_user
+
+                mock_space = AsyncMock()
+                mock_space_cls.return_value = mock_space
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.get(
+                        f"/v1/companies/members/{beta_member_id}/space-access",
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert response.status_code == 404
+        assert response.json() == _GENERIC_NOT_FOUND
+        # no space data was assembled for the foreign member
+        mock_space.list_by_company.assert_not_awaited()
+        mock_space.list_accessible_by_user.assert_not_awaited()
+        _assert_cross_tenant_audit(mock_audit, "user")
+
+    def test_non_admin_member_denied(self, two_company_setup):
+        """A non-admin Company A member calling the endpoint gets a generic 403."""
+        token_a, _ca, _tb, _cb = two_company_setup
+        target_id = uuid.uuid4()
+
+        with _bypass_onboarding_guard():
+            with patch("tessera_api.routers.companies.SqlSpaceRepository") as mock_space_cls:
+                mock_space = AsyncMock()
+                mock_space_cls.return_value = mock_space
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.get(
+                        f"/v1/companies/members/{target_id}/space-access",
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert response.status_code == 403
+        assert response.json() == _GENERIC_FORBIDDEN
+        mock_space.list_by_company.assert_not_awaited()
+
+
+class TestAdminWideSpaceListingIsolation:
+    """Feature 058: the company-admin space listing widens visibility only within
+    the active company — Company B spaces never surface, and cross-company by-ID
+    probes keep the generic 404 + ``cross_tenant_denied`` audit."""
+
+    def test_admin_wide_listing_never_contains_other_company_spaces(
+        self, admin_company_setup
+    ):
+        token_a, company_a_id, _tb, company_b_id = admin_company_setup
+        a_space = _make_space(company_a_id)
+        b_space = _make_space(company_b_id)
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
+                patch(
+                    "tessera_api.routers.spaces.SqlSpaceMembershipRepository",
+                    return_value=AsyncMock(),
+                ),
+            ):
+                mock_repo = AsyncMock()
+                mock_repo.list_accessible_by_user = AsyncMock(return_value=[])
+                # the tenant-scoped company query only ever yields A's spaces
+                mock_repo.list_by_company = AsyncMock(return_value=[a_space])
+                mock_repo_cls.return_value = mock_repo
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.get(
+                        "/v1/spaces",
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert response.status_code == 200
+        ids = [s["id"] for s in response.json()["spaces"]]
+        assert str(a_space.id) in ids
+        assert str(b_space.id) not in ids
+        # the admin-wide union is scoped to the session company id only
+        mock_repo.list_by_company.assert_awaited_once_with(company_a_id)
+        mock_repo.list_accessible_by_user.assert_awaited_once()
+        assert mock_repo.list_accessible_by_user.await_args.args[1] == company_a_id
+
+    def test_admin_cross_company_space_by_id_still_generic_404_and_audited(
+        self, admin_company_setup
+    ):
+        token_a, _ca, _tb, _cb = admin_company_setup
+        beta_space_id = uuid.uuid4()
+
+        with _bypass_onboarding_guard():
+            with (
+                patch("tessera_api.routers.spaces.SqlSpaceRepository") as mock_repo_cls,
+                patch(
+                    "tessera_api.routers.spaces.SqlSpaceMembershipRepository",
+                    return_value=AsyncMock(),
+                ),
+                patch(
+                    "tessera_api.routers.spaces.write_audit", new_callable=AsyncMock
+                ) as mock_audit,
+            ):
+                mock_repo = AsyncMock()
+                mock_repo.list_accessible_by_user = AsyncMock(return_value=[])
+                mock_repo.list_by_company = AsyncMock(return_value=[])
+                mock_repo.get_by_id_for_company = AsyncMock(return_value=None)
+                mock_repo_cls.return_value = mock_repo
+
+                from fastapi.testclient import TestClient
+                from tessera_api.main import app
+
+                with TestClient(app) as client:
+                    response = client.get(
+                        f"/v1/spaces/{beta_space_id}",
+                        headers={"Authorization": f"Bearer {token_a}"},
+                    )
+
+        assert response.status_code == 404
+        assert response.json() == _GENERIC_NOT_FOUND
+        _assert_cross_tenant_audit(mock_audit, "space")
 
 
 class TestUS1ProposalIsolation:

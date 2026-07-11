@@ -17,6 +17,10 @@ vi.mock("next/navigation", () => ({
 
 let mockAuthStatus: "authenticated" | "unauthenticated" | "loading" = "authenticated";
 
+vi.mock("@/lib/company", () => ({
+  useCompany: () => ({ activeCompany: { id: "c1", name: "Acme", role: "admin" } }),
+}));
+
 vi.mock("@/lib/auth", () => ({
   useAuth: () => ({ status: mockAuthStatus }),
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,

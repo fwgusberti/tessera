@@ -172,29 +172,30 @@ async def create_space(body: CreateSpaceRequest, ctx: CompanyContext, session: S
 
 
 @router.get("/spaces")
-async def list_spaces(ctx: CompanyContext, session: SessionDep) -> dict:
-    user_info, company_id = ctx
+async def list_spaces(ctx: CompanyMemberContext, session: SessionDep) -> dict:
+    user_info, company_id, caller_membership = ctx
     user_id = UUID(user_info["sub"])
-    repo = SqlSpaceRepository(session)
-    accessible = await repo.list_accessible_by_user(user_id, company_id)
+    svc = SpaceHierarchyService(SqlSpaceRepository(session), SqlSpaceMembershipRepository(session))
+    # is_company_admin derives from the caller's session-bound membership row,
+    # never from client input (Constitution VI); admins see every company space (058).
+    accessible = await svc.list_accessible(
+        user_id, company_id, is_company_admin=is_company_admin(caller_membership)
+    )
     return {"spaces": _space_access_response(accessible)}
 
 
 @router.get("/spaces/{space_id}/ancestors")
-async def get_ancestors(space_id: UUID, ctx: CompanyContext, session: SessionDep) -> dict:
-    user_info, company_id = ctx
+async def get_ancestors(space_id: UUID, ctx: CompanyMemberContext, session: SessionDep) -> dict:
+    user_info, company_id, caller_membership = ctx
     user_id = UUID(user_info["sub"])
     repo = SqlSpaceRepository(session)
+    svc = SpaceHierarchyService(repo, SqlSpaceMembershipRepository(session))
 
-    # Caller must have effective access to the space (direct or inherited)
-    accessible = await repo.list_accessible_by_user(user_id, company_id)
-    accessible_ids = {a.space.id for a in accessible}
-    if space_id not in accessible_ids:
-        # Also accept: space exists in company but user has no membership at all
-        space = await repo.get_by_id_for_company(space_id, company_id)
-        if space is None:
-            raise _not_found()
-        # User has no access to this space
+    # Caller must have effective access to the space (direct, inherited, or implicit admin)
+    access = await svc.get_access(
+        user_id, space_id, company_id, is_company_admin=is_company_admin(caller_membership)
+    )
+    if access is None:
         raise _not_found()
 
     ancestors = await repo.get_ancestor_chain(space_id)
@@ -202,24 +203,24 @@ async def get_ancestors(space_id: UUID, ctx: CompanyContext, session: SessionDep
 
 
 @router.get("/spaces/{space_id}")
-async def get_space(space_id: UUID, ctx: CompanyContext, session: SessionDep) -> dict:
-    user_info, company_id = ctx
+async def get_space(space_id: UUID, ctx: CompanyMemberContext, session: SessionDep) -> dict:
+    user_info, company_id, caller_membership = ctx
     user_id = UUID(user_info["sub"])
     repo = SqlSpaceRepository(session)
+    svc = SpaceHierarchyService(repo, SqlSpaceMembershipRepository(session))
 
-    # Check effective access (direct or inherited)
-    accessible = await repo.list_accessible_by_user(user_id, company_id)
-    accessible_ids = {a.space.id for a in accessible}
-
-    if space_id not in accessible_ids:
-        actor_id = user_id
+    # Check effective access (direct, inherited, or implicit admin — 058)
+    access = await svc.get_access(
+        user_id, space_id, company_id, is_company_admin=is_company_admin(caller_membership)
+    )
+    if access is None:
         # Audit cross-tenant probe if space exists outside company or doesn't exist
         space_in_company = await repo.get_by_id_for_company(space_id, company_id)
         if space_in_company is None:
             await write_audit(
                 session,
                 actor_type="user",
-                actor_id=actor_id,
+                actor_id=user_id,
                 action="cross_tenant_denied",
                 entity_type="space",
                 entity_id=space_id,
@@ -228,8 +229,7 @@ async def get_space(space_id: UUID, ctx: CompanyContext, session: SessionDep) ->
             await session.commit()
         raise _not_found()
 
-    space_access = next(a for a in accessible if a.space.id == space_id)
-    return {"space": _space_response(space_access.space)}
+    return {"space": _space_response(access.space)}
 
 
 @router.patch("/spaces/{space_id}/parent")

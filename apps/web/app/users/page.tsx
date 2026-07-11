@@ -6,6 +6,7 @@ import { getCompanyMembers, type CompanyMember } from "@/lib/companies";
 import { useCompany } from "@/lib/company";
 import { CompanyRoleBadge } from "@/components/company/CompanyRoleBadge";
 import { AddUserPanel } from "@/components/company/AddUserPanel";
+import { MemberSpaceAccessPanel } from "@/components/members/MemberSpaceAccessPanel";
 
 export default function UsersPage() {
   const { activeCompany } = useCompany();
@@ -16,6 +17,7 @@ export default function UsersPage() {
   const [denied, setDenied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAddPanel, setShowAddPanel] = useState(false);
+  const [spacesMember, setSpacesMember] = useState<CompanyMember | null>(null);
 
   useEffect(() => {
     getCompanyMembers()
@@ -77,6 +79,9 @@ export default function UsersPage() {
                 <tr className="border-b border-slate-200 text-left">
                   <th className="py-2 pr-4 font-medium text-slate-600">User</th>
                   <th className="py-2 font-medium text-slate-600">Role</th>
+                  {isAdmin && (
+                    <th className="py-2 font-medium text-slate-600">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -96,12 +101,33 @@ export default function UsersPage() {
                     <td className="py-3">
                       <CompanyRoleBadge role={member.role} />
                     </td>
+                    {isAdmin && (
+                      <td className="py-3">
+                        <button
+                          onClick={() =>
+                            setSpacesMember((prev) =>
+                              prev?.user_id === member.user_id ? null : member
+                            )
+                          }
+                          className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                        >
+                          {spacesMember?.user_id === member.user_id
+                            ? "Close spaces"
+                            : "Spaces"}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
             {members.length === 0 && (
               <p className="text-sm text-slate-500 py-4 text-center">No users yet.</p>
+            )}
+            {isAdmin && spacesMember && (
+              <div className="mt-4">
+                <MemberSpaceAccessPanel member={spacesMember} />
+              </div>
             )}
           </div>
         )}

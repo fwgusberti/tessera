@@ -82,6 +82,18 @@ def _integrity_error() -> IntegrityError:
     return IntegrityError("stmt", {}, Exception("duplicate key"))
 
 
+def _ob_repo() -> AsyncMock:
+    """OnboardingProgress repo mock for the add-member completion step (T010).
+
+    ``get_by_user_id`` returns None so the handler exercises the create branch; the
+    remaining calls (``create``/``advance_step``/``complete``) are recorded for
+    assertions and their return values are unused by the endpoint.
+    """
+    repo = AsyncMock()
+    repo.get_by_user_id = AsyncMock(return_value=None)
+    return repo
+
+
 # ---------------------------------------------------------------------------
 # US1 — POST /v1/companies/invitations (invite by email)
 # ---------------------------------------------------------------------------
@@ -413,6 +425,7 @@ class TestAddMemberContract:
             _bypass_onboarding_guard(),
             patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=company_repo),
             patch("tessera_api.routers.companies.SqlUserRepository", return_value=user_repo),
+            patch("tessera_api.routers.companies.SqlOnboardingRepository", return_value=_ob_repo()),
             patch(
                 "tessera_api.routers.companies.write_audit", new_callable=AsyncMock
             ) as mock_audit,
@@ -439,6 +452,64 @@ class TestAddMemberContract:
         assert company_repo.add_membership.await_args.args[0].company_id == company_a_id
         actions = [c.kwargs.get("action") for c in mock_audit.await_args_list]
         assert "company.member_added" in actions
+
+    def test_add_member_persists_onboarding_completion_and_audits(self, admin_company_setup):
+        """T007/US1 (contract C4): a direct add marks the target onboarded + audits it.
+
+        After ``POST /v1/companies/members`` the target's OnboardingProgress is marked
+        complete with ``company_join_method="added"`` and ``company_id`` = the active
+        company, and an ``onboarding.completed`` audit record is written for the target.
+        """
+        token_a, company_a_id, _tb, _cb = admin_company_setup
+        target = _user(email="ada@x.com", name="Ada Lovelace")
+
+        company_repo = AsyncMock()
+        company_repo.get_membership = AsyncMock(return_value=None)
+        company_repo.add_membership = AsyncMock(
+            return_value=_membership(target.id, company_a_id, CompanyRole.MEMBER)
+        )
+        user_repo = AsyncMock()
+        user_repo.get_by_id = AsyncMock(return_value=target)
+        ob_repo = _ob_repo()
+
+        with (
+            _bypass_onboarding_guard(),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=company_repo),
+            patch("tessera_api.routers.companies.SqlUserRepository", return_value=user_repo),
+            patch("tessera_api.routers.companies.SqlOnboardingRepository", return_value=ob_repo),
+            patch(
+                "tessera_api.routers.companies.write_audit", new_callable=AsyncMock
+            ) as mock_audit,
+        ):
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                resp = client.post(
+                    "/v1/companies/members",
+                    json={"user_id": str(target.id)},
+                    headers={"Authorization": f"Bearer {token_a}"},
+                )
+
+        assert resp.status_code == 201, resp.text
+
+        # Onboarding marked complete for the TARGET, scoped to the active company.
+        ob_repo.advance_step.assert_awaited_once()
+        step_args = ob_repo.advance_step.await_args
+        assert step_args.args[0] == target.id
+        assert step_args.args[1] == "complete"
+        assert step_args.kwargs["company_join_method"] == "added"
+        assert step_args.kwargs["company_id"] == company_a_id
+        ob_repo.complete.assert_awaited_once_with(target.id)
+
+        # An onboarding.completed audit record was written for the target user.
+        completed_audits = [
+            c
+            for c in mock_audit.await_args_list
+            if c.kwargs.get("action") == "onboarding.completed"
+        ]
+        assert len(completed_audits) == 1, "expected exactly one onboarding.completed audit"
+        assert completed_audits[0].kwargs["entity_type"] == "user"
+        assert completed_audits[0].kwargs["entity_id"] == target.id
 
     def test_add_unknown_user_returns_404_no_such_user(self, admin_company_setup):
         token_a, company_a_id, _tb, _cb = admin_company_setup
@@ -571,6 +642,7 @@ class TestRoleChoiceContract:
             _bypass_onboarding_guard(),
             patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=company_repo),
             patch("tessera_api.routers.companies.SqlUserRepository", return_value=user_repo),
+            patch("tessera_api.routers.companies.SqlOnboardingRepository", return_value=_ob_repo()),
             patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
         ):
             from tessera_api.main import app
@@ -602,6 +674,7 @@ class TestRoleChoiceContract:
             _bypass_onboarding_guard(),
             patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=company_repo),
             patch("tessera_api.routers.companies.SqlUserRepository", return_value=user_repo),
+            patch("tessera_api.routers.companies.SqlOnboardingRepository", return_value=_ob_repo()),
             patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
         ):
             from tessera_api.main import app

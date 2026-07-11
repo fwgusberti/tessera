@@ -8,6 +8,7 @@ Verifies that:
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -65,13 +66,138 @@ def _bearer_db_mocks(user_id: uuid.UUID):
     return mock_db, mock_ob_cls
 
 
-def _handler_db_mock():
-    """Return (db_mock, session) for mocking a route handler's get_db() call."""
-    mock_session = AsyncMock()
-    mock_db = MagicMock()
-    mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
-    return mock_db, mock_session
+@contextmanager
+def _with_db(mock_session=None):
+    """Override get_db via dependency injection so no real DB is touched."""
+    from tessera_api.adapters.database import get_db
+    from tessera_api.main import app
+
+    if mock_session is None:
+        mock_session = AsyncMock()
+
+    async def _gen():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = _gen
+    try:
+        yield mock_session
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def _gate_repo_mocks(user_id: uuid.UUID, *, has_membership: bool, completed_at=None):
+    """Mocks for the bearer gate's two source-module repos.
+
+    Returns (ob_cls, co_cls) patching ``tessera_api.adapters.repo`` — the gate
+    imports both dynamically from there. ``has_membership`` controls whether the
+    caller has any company membership; ``completed_at`` seeds the onboarding row.
+    """
+    progress = OnboardingProgress(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        completed_steps=["profile"],
+        current_step="company",
+        company_join_method=None,
+        completed_at=completed_at,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    mock_ob_cls = MagicMock()
+    mock_ob = AsyncMock()
+    mock_ob.get_by_user_id = AsyncMock(return_value=progress)
+    mock_ob_cls.return_value = mock_ob
+
+    memberships = (
+        [
+            CompanyMembership(
+                id=uuid.uuid4(),
+                user_id=user_id,
+                company_id=uuid.uuid4(),
+                role=CompanyRole.MEMBER,
+                joined_at=datetime.now(UTC),
+            )
+        ]
+        if has_membership
+        else []
+    )
+    mock_co_cls = MagicMock()
+    mock_co = AsyncMock()
+    mock_co.list_memberships_for_user = AsyncMock(return_value=memberships)
+    mock_co_cls.return_value = mock_co
+
+    return mock_ob_cls, mock_co_cls
+
+
+class TestOnboardingGateMembershipSatisfies:
+    """The server gate treats company membership as authoritative for onboarding.
+
+    These tests exercise a GUARDED (non-exempt) endpoint —
+    ``GET /v1/companies/{id}/join-requests`` — so the onboarding gate actually runs
+    (``/companies/me`` is exempt and would bypass it). Contract C2: a full-token
+    caller with >=1 membership is admitted past the onboarding gate regardless of
+    completed_at (the request then hits the normal company-scoped admin guard,
+    returning ``forbidden`` — crucially NOT ``onboarding_required``); a caller with
+    zero memberships and null completed_at is still blocked with ``onboarding_required``
+    (FR-007). Recovery (US3): a pre-fix trapped member — membership present but
+    completed_at null — is admitted with no migration.
+    """
+
+    # A guarded endpoint: the gate runs, then the route's own company-scoped guard.
+    _GUARDED_PATH = "/v1/companies/{}/join-requests"
+
+    def _call(self, user_id, *, has_membership):
+        ob_cls, co_cls = _gate_repo_mocks(user_id, has_membership=has_membership, completed_at=None)
+
+        # Handler-side repo (module-level name) — its admin check returns None so a
+        # caller the gate admits cleanly hits the company-scoped guard (403 forbidden),
+        # never the onboarding block.
+        handler_repo = AsyncMock()
+        handler_repo.get_membership = AsyncMock(return_value=None)
+
+        company_id = uuid.uuid4()
+        with (
+            _with_db(),
+            patch("tessera_api.adapters.repo.SqlOnboardingRepository", ob_cls),
+            patch("tessera_api.adapters.repo.SqlCompanyRepository", co_cls),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=handler_repo),
+            patch(
+                "tessera_api.routers.companies.SqlJoinRequestRepository", return_value=AsyncMock()
+            ),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                return client.get(
+                    self._GUARDED_PATH.format(company_id), headers=_make_jwt_header(user_id)
+                )
+
+    def test_member_with_null_completed_at_is_admitted(self):
+        """T004/US1: membership + completed_at NULL → gate does NOT raise onboarding_required (C2)."""
+        response = self._call(uuid.uuid4(), has_membership=True)
+        body = response.json()
+
+        # Admitted past the onboarding gate; the normal company-scoped admin guard
+        # then denies (this member is not an admin of that company) — not the onboarding block.
+        assert "onboarding_required" not in str(body), f"gate must admit a member; got {body}"
+        assert body["error"]["code"] == "forbidden"
+
+    def test_no_membership_and_null_completed_at_still_blocked(self):
+        """T013/US2 (FR-007): zero memberships + completed_at NULL → 403 onboarding_required."""
+        response = self._call(uuid.uuid4(), has_membership=False)
+
+        assert response.status_code == 403
+        assert "onboarding_required" in str(response.json())
+
+    def test_pre_fix_trapped_member_recovers_without_migration(self):
+        """T015/US3: membership + null completed_at (inserted bypassing the endpoint) → admitted.
+
+        Proves recovery is purely read-derived from membership — no backfill needed.
+        """
+        response = self._call(uuid.uuid4(), has_membership=True)
+        body = response.json()
+
+        assert "onboarding_required" not in str(body), f"trapped member must recover; got {body}"
 
 
 class TestOnboardingGateExemptions:
@@ -83,9 +209,6 @@ class TestOnboardingGateExemptions:
         company_id = uuid.uuid4()
         now = datetime.now(UTC)
         progress = _make_incomplete_progress(user_id)
-
-        bearer_db, bearer_ob_cls = _bearer_db_mocks(user_id)
-        handler_db, _ = _handler_db_mock()
 
         company = Company(
             id=company_id, name="Gate Test Co", admin_user_id=user_id,
@@ -104,9 +227,7 @@ class TestOnboardingGateExemptions:
         mock_ob_handler.advance_step = AsyncMock(return_value=progress)
 
         with (
-            patch("tessera_api.adapters.database.get_db", bearer_db),
-            patch("tessera_api.adapters.repo.SqlOnboardingRepository", bearer_ob_cls),
-            patch("tessera_api.routers.companies.get_db", handler_db),
+            _with_db(),
             patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_company_repo),
             patch("tessera_api.routers.companies.SqlOnboardingRepository", return_value=mock_ob_handler),
             patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
@@ -130,9 +251,6 @@ class TestOnboardingGateExemptions:
         """GET /v1/companies/suggestions must NOT be blocked for a mid-onboarding user (US2)."""
         user_id = uuid.uuid4()
 
-        bearer_db, bearer_ob_cls = _bearer_db_mocks(user_id)
-        handler_db, _ = _handler_db_mock()
-
         mock_inv_repo = AsyncMock()
         mock_inv_repo.get_pending_for_email = AsyncMock(return_value=[])
 
@@ -140,9 +258,7 @@ class TestOnboardingGateExemptions:
         mock_domain_repo.get_by_domain = AsyncMock(return_value=None)
 
         with (
-            patch("tessera_api.adapters.database.get_db", bearer_db),
-            patch("tessera_api.adapters.repo.SqlOnboardingRepository", bearer_ob_cls),
-            patch("tessera_api.routers.companies.get_db", handler_db),
+            _with_db(),
             patch("tessera_api.routers.companies.SqlInvitationRepository", return_value=mock_inv_repo),
             patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=AsyncMock()),
             patch("tessera_api.routers.companies.SqlDomainPolicyRepository", return_value=mock_domain_repo),
@@ -168,9 +284,6 @@ class TestOnboardingGateExemptions:
         invitation_id = uuid.uuid4()
         now = datetime.now(UTC)
         progress = _make_incomplete_progress(user_id)
-
-        bearer_db, bearer_ob_cls = _bearer_db_mocks(user_id)
-        handler_db, _ = _handler_db_mock()
 
         company = Company(
             id=company_id, name="Existing Corp",
@@ -203,9 +316,7 @@ class TestOnboardingGateExemptions:
         mock_ob_handler.advance_step = AsyncMock(return_value=progress)
 
         with (
-            patch("tessera_api.adapters.database.get_db", bearer_db),
-            patch("tessera_api.adapters.repo.SqlOnboardingRepository", bearer_ob_cls),
-            patch("tessera_api.routers.companies.get_db", handler_db),
+            _with_db(),
             patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_company_repo),
             patch("tessera_api.routers.companies.SqlInvitationRepository", return_value=mock_inv_repo),
             patch("tessera_api.routers.companies.SqlOnboardingRepository", return_value=mock_ob_handler),
@@ -236,9 +347,6 @@ class TestAdminInvariantAfterEnrollment:
         now = datetime.now(UTC)
         progress = _make_incomplete_progress(user_id)
 
-        bearer_db, bearer_ob_cls = _bearer_db_mocks(user_id)
-        handler_db, _ = _handler_db_mock()
-
         company = Company(
             id=company_id, name="Invariant Test Co", admin_user_id=user_id,
             created_at=now, updated_at=now,
@@ -256,9 +364,7 @@ class TestAdminInvariantAfterEnrollment:
         mock_ob_handler.advance_step = AsyncMock(return_value=progress)
 
         with (
-            patch("tessera_api.adapters.database.get_db", bearer_db),
-            patch("tessera_api.adapters.repo.SqlOnboardingRepository", bearer_ob_cls),
-            patch("tessera_api.routers.companies.get_db", handler_db),
+            _with_db(),
             patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=mock_company_repo),
             patch("tessera_api.routers.companies.SqlOnboardingRepository", return_value=mock_ob_handler),
             patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),

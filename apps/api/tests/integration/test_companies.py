@@ -675,3 +675,100 @@ class TestActivateCompanySession:
         assert user.get("email") == "existing@oidc.example.com", f"email was overwritten: {user}"
         assert user.get("is_admin") is True, f"is_admin was overwritten: {user}"
         assert user.get("name") == "OIDC User", f"extra OIDC field was lost: {user}"
+
+
+class TestAdminAddOnboardingJourney:
+    """T006/US1: the end-to-end admin-add journey (contract table rows 1-2, 4).
+
+    An admin adds an already-registered, not-yet-onboarded user; the direct-add
+    endpoint marks the target onboarded, and the target's own ``GET /onboarding/status``
+    then reports ``completed=true`` via the membership branch. (The server-gate leg —
+    the added user's data calls returning 200 — is proven authoritatively against the
+    real gate in ``test_onboarding_gate.py``; this file overrides that guard.)
+    """
+
+    def test_admin_add_then_status_reports_completed(self, admin_company_setup):
+        token_a, company_a_id, _tb, _cb = admin_company_setup
+        from tessera_core.domain.entities import User
+
+        target_id = uuid.uuid4()
+        target = User(
+            id=target_id,
+            external_subject=f"sub-{target_id}",
+            email="added@acme.test",
+            display_name="Added Member",
+            is_admin=False,
+        )
+
+        # --- Phase 1: admin directly adds the target ---------------------------------
+        company_repo = AsyncMock()
+        company_repo.get_membership = AsyncMock(return_value=None)
+        company_repo.add_membership = AsyncMock(
+            return_value=CompanyMembership(
+                id=uuid.uuid4(),
+                user_id=target_id,
+                company_id=company_a_id,
+                role=CompanyRole.MEMBER,
+                joined_at=datetime.now(UTC),
+            )
+        )
+        user_repo = AsyncMock()
+        user_repo.get_by_id = AsyncMock(return_value=target)
+        ob_repo = AsyncMock()
+        ob_repo.get_by_user_id = AsyncMock(return_value=None)
+
+        with (
+            _bypass_onboarding_guard(),
+            patch("tessera_api.routers.companies.SqlCompanyRepository", return_value=company_repo),
+            patch("tessera_api.routers.companies.SqlUserRepository", return_value=user_repo),
+            patch("tessera_api.routers.companies.SqlOnboardingRepository", return_value=ob_repo),
+            patch("tessera_api.routers.companies.write_audit", new_callable=AsyncMock),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                add_resp = client.post(
+                    "/v1/companies/members",
+                    json={"user_id": str(target_id)},
+                    headers={"Authorization": f"Bearer {token_a}"},
+                )
+
+        assert add_resp.status_code == 201, add_resp.text
+        # The target was marked onboarded as part of the add (contract C4).
+        ob_repo.complete.assert_awaited_once_with(target_id)
+
+        # --- Phase 2: the added user checks their own onboarding status --------------
+        # Membership is now authoritative — even with a null completed_at the status
+        # endpoint reports completed=true (contract C3 / table rows 1-2).
+        status_progress = _make_progress(target_id)  # completed_at is None
+        status_ob = AsyncMock()
+        status_ob.get_by_user_id = AsyncMock(return_value=status_progress)
+        status_co = AsyncMock()
+        status_co.list_memberships_for_user = AsyncMock(
+            return_value=[
+                CompanyMembership(
+                    id=uuid.uuid4(),
+                    user_id=target_id,
+                    company_id=company_a_id,
+                    role=CompanyRole.MEMBER,
+                    joined_at=datetime.now(UTC),
+                )
+            ]
+        )
+
+        with (
+            _with_db(),
+            patch("tessera_api.routers.onboarding.SqlOnboardingRepository", return_value=status_ob),
+            patch("tessera_api.routers.onboarding.SqlCompanyRepository", return_value=status_co),
+        ):
+            from fastapi.testclient import TestClient
+            from tessera_api.main import app
+
+            with TestClient(app) as client:
+                status_resp = client.get(
+                    "/v1/onboarding/status", headers=_make_jwt_header(target_id)
+                )
+
+        assert status_resp.status_code == 200, status_resp.text
+        assert status_resp.json()["completed"] is True

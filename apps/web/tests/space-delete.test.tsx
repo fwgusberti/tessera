@@ -15,6 +15,10 @@ vi.mock("next/navigation", () => ({
 
 // --- useAuth mock ---
 
+vi.mock("@/lib/company", () => ({
+  useCompany: () => ({ activeCompany: { id: "c1", name: "Acme", role: "admin" } }),
+}));
+
 vi.mock("@/lib/auth", () => ({
   useAuth: () => ({ status: "authenticated" }),
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,

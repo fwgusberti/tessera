@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tessera_api.adapters.database import SessionDep, get_db
 from tessera_core.domain.entities import AgentCredential
+from tessera_core.domain.onboarding_progress import has_completed_onboarding
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -100,11 +101,14 @@ async def require_onboarding_complete(
 
     user_id = UUID(user_info["sub"])
 
-    from tessera_api.adapters.repo import SqlOnboardingRepository
+    from tessera_api.adapters.repo import SqlCompanyRepository, SqlOnboardingRepository
 
-    repo = SqlOnboardingRepository(session)
-    progress = await repo.get_by_user_id(user_id)
-    if progress is None or progress.completed_at is None:
+    progress = await SqlOnboardingRepository(session).get_by_user_id(user_id)
+    memberships = await SqlCompanyRepository(session).list_memberships_for_user(user_id)
+    if not has_completed_onboarding(progress, has_company_membership=bool(memberships)):
+        # Company membership is authoritative: a member is onboarded regardless of
+        # completed_at (fixes the admin-added trap, recovers pre-existing members).
+        # A user with no membership and no completed_at is still gated (FR-007).
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
