@@ -6,23 +6,28 @@ vi.mock("@/lib/api", () => ({
   authLogin: vi.fn(),
   authRefresh: vi.fn(),
   authLogout: vi.fn(),
+  authSelectTenant: vi.fn(),
   configureApi: vi.fn(),
   api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
 }));
 
 import { AuthProvider, useAuth } from "@/lib/auth";
-import { authLogin, authRefresh, authLogout } from "@/lib/api";
+import { authLogin, authRefresh, authLogout, authSelectTenant } from "@/lib/api";
 
 const mockAuthLogin = authLogin as ReturnType<typeof vi.fn>;
 const mockAuthRefresh = authRefresh as ReturnType<typeof vi.fn>;
 const mockAuthLogout = authLogout as ReturnType<typeof vi.fn>;
+const mockAuthSelectTenant = authSelectTenant as ReturnType<typeof vi.fn>;
 
-const FAKE_JWT = [
-  "header",
-  btoa(JSON.stringify({ sub: "user-1", email: "test@example.com", is_admin: false, exp: 9999999999 }))
-    .replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_"),
-  "signature",
-].join(".");
+function makeJwt(payload: Record<string, unknown>): string {
+  return [
+    "header",
+    btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_"),
+    "signature",
+  ].join(".");
+}
+
+const FAKE_JWT = makeJwt({ sub: "user-1", email: "test@example.com", is_admin: false, exp: 9999999999 });
 
 const LOGIN_RESPONSE = {
   access_token: FAKE_JWT,
@@ -59,7 +64,13 @@ describe("AuthContext / login", () => {
     });
 
     expect(result.current.status).toBe("authenticated");
-    expect(result.current.user).toEqual({ id: "user-1", email: "test@example.com", isAdmin: false });
+    expect(result.current.user).toEqual({
+      id: "user-1",
+      email: "test@example.com",
+      isAdmin: false,
+      tokenKind: "full",
+      companyId: null,
+    });
     expect(result.current.accessToken).toBe(FAKE_JWT);
     expect(localStorage.getItem("tessera_access_token")).toBe(FAKE_JWT);
     expect(localStorage.getItem("tessera_refresh_token")).toBe("rt-abc");
@@ -93,6 +104,170 @@ describe("AuthContext / login", () => {
     });
 
     expect(mockAuthLogin).toHaveBeenCalledWith("test@example.com", "secret");
+  });
+});
+
+// ─── Token kind decoding ──────────────────────────────────────────────────────
+
+describe("AuthContext / token kind decoding", () => {
+  it("surfaces tokenKind and companyId from the JWT claims on a full token", async () => {
+    const jwt = makeJwt({
+      sub: "user-1",
+      email: "test@example.com",
+      is_admin: true,
+      token_kind: "full",
+      company_id: "co-1",
+      exp: 9999999999,
+    });
+    mockAuthLogin.mockResolvedValue({ ...LOGIN_RESPONSE, access_token: jwt });
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe("unauthenticated"));
+
+    await act(async () => {
+      await result.current.login({ email: "test@example.com", password: "pass" });
+    });
+
+    expect(result.current.user?.tokenKind).toBe("full");
+    expect(result.current.user?.companyId).toBe("co-1");
+  });
+
+  it("surfaces tokenKind 'select' with null companyId on a select token", async () => {
+    const jwt = makeJwt({
+      sub: "user-1",
+      email: "test@example.com",
+      is_admin: false,
+      token_kind: "select",
+      exp: 9999999999,
+    });
+    mockAuthLogin.mockResolvedValue({ ...LOGIN_RESPONSE, access_token: jwt });
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe("unauthenticated"));
+
+    await act(async () => {
+      await result.current.login({ email: "test@example.com", password: "pass" });
+    });
+
+    expect(result.current.user?.tokenKind).toBe("select");
+    expect(result.current.user?.companyId).toBeNull();
+  });
+
+  it("defaults tokenKind to 'full' when the claim is absent (legacy tokens)", async () => {
+    mockAuthLogin.mockResolvedValue(LOGIN_RESPONSE); // FAKE_JWT has no token_kind
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe("unauthenticated"));
+
+    await act(async () => {
+      await result.current.login({ email: "test@example.com", password: "pass" });
+    });
+
+    expect(result.current.user?.tokenKind).toBe("full");
+    expect(result.current.user?.companyId).toBeNull();
+  });
+});
+
+// ─── Tenant selection ─────────────────────────────────────────────────────────
+
+describe("AuthContext / selectTenant", () => {
+  const SELECT_JWT = makeJwt({
+    sub: "user-1",
+    email: "test@example.com",
+    is_admin: false,
+    token_kind: "select",
+    exp: 9999999999,
+  });
+  const FULL_JWT = makeJwt({
+    sub: "user-1",
+    email: "test@example.com",
+    is_admin: true,
+    token_kind: "full",
+    company_id: "co-1",
+    exp: 9999999999,
+  });
+
+  function seedSelectSession() {
+    localStorage.setItem("tessera_access_token", SELECT_JWT);
+    localStorage.setItem("tessera_refresh_token", "rt-select");
+    localStorage.setItem("tessera_expires_at", String(Date.now() + 900_000));
+  }
+
+  it("login resolves { tenantSelectionRequired: true } when the response carries the flag", async () => {
+    mockAuthLogin.mockResolvedValue({
+      ...LOGIN_RESPONSE,
+      access_token: SELECT_JWT,
+      tenant_selection_required: true,
+    });
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe("unauthenticated"));
+
+    let outcome: { tenantSelectionRequired: boolean } | undefined;
+    await act(async () => {
+      outcome = await result.current.login({ email: "test@example.com", password: "pass" });
+    });
+
+    expect(outcome).toEqual({ tenantSelectionRequired: true });
+  });
+
+  it("login resolves { tenantSelectionRequired: false } when the flag is absent", async () => {
+    mockAuthLogin.mockResolvedValue(LOGIN_RESPONSE);
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe("unauthenticated"));
+
+    let outcome: { tenantSelectionRequired: boolean } | undefined;
+    await act(async () => {
+      outcome = await result.current.login({ email: "test@example.com", password: "pass" });
+    });
+
+    expect(outcome).toEqual({ tenantSelectionRequired: false });
+  });
+
+  it("selectTenant exchanges the current access token via authSelectTenant and persists the pair", async () => {
+    seedSelectSession();
+    mockAuthSelectTenant.mockResolvedValue({
+      access_token: FULL_JWT,
+      refresh_token: "rt-full",
+      token_type: "bearer",
+      expires_in: 900,
+    });
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe("authenticated"));
+
+    await act(async () => {
+      await result.current.selectTenant("co-1");
+    });
+
+    expect(mockAuthSelectTenant).toHaveBeenCalledWith(SELECT_JWT, "co-1");
+    expect(localStorage.getItem("tessera_access_token")).toBe(FULL_JWT);
+    expect(localStorage.getItem("tessera_refresh_token")).toBe("rt-full");
+    expect(result.current.accessToken).toBe(FULL_JWT);
+    expect(result.current.user?.tokenKind).toBe("full");
+    expect(result.current.user?.companyId).toBe("co-1");
+    expect(result.current.status).toBe("authenticated");
+  });
+
+  it("selectTenant leaves stored tokens and state untouched when the exchange fails", async () => {
+    seedSelectSession();
+    mockAuthSelectTenant.mockRejectedValue(new Error("Company is suspended"));
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe("authenticated"));
+
+    await expect(
+      act(async () => {
+        await result.current.selectTenant("co-suspended");
+      })
+    ).rejects.toThrow("Company is suspended");
+
+    expect(localStorage.getItem("tessera_access_token")).toBe(SELECT_JWT);
+    expect(localStorage.getItem("tessera_refresh_token")).toBe("rt-select");
+    expect(result.current.accessToken).toBe(SELECT_JWT);
+    expect(result.current.user?.tokenKind).toBe("select");
+    expect(result.current.status).toBe("authenticated");
   });
 });
 

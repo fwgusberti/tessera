@@ -45,12 +45,16 @@ function LoginForm() {
 
     setSubmitting(true);
     try {
-      await login({ email: email.trim(), password });
+      const result = await login({ email: email.trim(), password });
       const dest =
         redirect && redirect.startsWith("/") && !redirect.startsWith("//")
           ? redirect
           : "/";
-      router.push(dest);
+      if (result?.tenantSelectionRequired) {
+        router.push(`/select-company?redirect=${encodeURIComponent(dest)}`);
+      } else {
+        router.push(dest);
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Login failed";
       if (message === "Invalid credentials") {

@@ -18,6 +18,7 @@ const mockGetAccessToken = vi.fn(() => "access-tok");
 const mockRefreshIfNeeded = vi.fn(async () => "access-tok");
 const mockForceRefresh = vi.fn(async () => "new-tok");
 const mockOnUnauthorized = vi.fn();
+const mockOnTenantSelectionRequired = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -29,6 +30,7 @@ beforeEach(() => {
     refreshIfNeeded: mockRefreshIfNeeded,
     forceRefresh: mockForceRefresh,
     onUnauthorized: mockOnUnauthorized,
+    onTenantSelectionRequired: mockOnTenantSelectionRequired,
   });
 });
 
@@ -85,5 +87,59 @@ describe("api / auth injection", () => {
     await expect(api.get("/v1/spaces")).rejects.toThrow("Not Found");
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockForceRefresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("api / credential_not_scoped interception", () => {
+  const RAW_MESSAGE = "Credential is not scoped to a tenant; call /auth/select-tenant first";
+
+  it("invokes onTenantSelectionRequired and throws friendly copy on 403 credential_not_scoped", async () => {
+    mockFetch.mockReturnValue(
+      jsonResponse({ error: { code: "credential_not_scoped", message: RAW_MESSAGE } }, 403)
+    );
+
+    let thrown: unknown;
+    try {
+      await api.get("/v1/spaces");
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(mockOnTenantSelectionRequired).toHaveBeenCalledTimes(1);
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message).toContain("Please choose a company to continue.");
+    expect(message).not.toContain("Credential is not scoped to a tenant");
+  });
+
+  it("keeps the ApiError code and status on interception", async () => {
+    mockFetch.mockReturnValue(
+      jsonResponse({ error: { code: "credential_not_scoped", message: RAW_MESSAGE } }, 403)
+    );
+
+    let thrown: unknown;
+    try {
+      await api.get("/v1/spaces");
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toMatchObject({ code: "credential_not_scoped", status: 403 });
+  });
+
+  it("does not intercept other 403 codes", async () => {
+    mockFetch.mockReturnValue(
+      jsonResponse({ error: { code: "not_a_member", message: "Not a member of this company" } }, 403)
+    );
+
+    await expect(api.get("/v1/spaces")).rejects.toThrow("Not a member of this company");
+    expect(mockOnTenantSelectionRequired).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke the callback on successful responses", async () => {
+    mockFetch.mockReturnValue(jsonResponse({ data: "ok" }));
+
+    await api.get("/v1/spaces");
+    expect(mockOnTenantSelectionRequired).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { AuthStatus, AuthUser, LoginCredentials } from "./types";
-import { authLogin, authLogout, authRefresh, configureApi } from "./api";
+import { authLogin, authLogout, authRefresh, authSelectTenant, configureApi } from "./api";
 
 const LS_ACCESS_TOKEN = "tessera_access_token";
 const LS_REFRESH_TOKEN = "tessera_refresh_token";
@@ -13,16 +13,23 @@ export interface AuthContextValue {
   status: AuthStatus;
   user: AuthUser | null;
   accessToken: string | null;
-  login(credentials: LoginCredentials): Promise<void>;
+  login(credentials: LoginCredentials): Promise<{ tenantSelectionRequired: boolean }>;
   logout(): Promise<void>;
   refreshIfNeeded(): Promise<string>;
+  selectTenant(companyId: string): Promise<void>;
 }
 
 function decodeJwtUser(token: string): AuthUser | null {
   try {
     const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
     const payload = JSON.parse(atob(b64));
-    return { id: payload.sub, email: payload.email, isAdmin: payload.is_admin ?? false };
+    return {
+      id: payload.sub,
+      email: payload.email,
+      isAdmin: payload.is_admin ?? false,
+      tokenKind: payload.token_kind ?? "full",
+      companyId: payload.company_id ?? null,
+    };
   } catch {
     return null;
   }
@@ -146,6 +153,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const data = await authLogin(email, password);
     const exp = writeStorage(data.access_token, data.refresh_token, data.expires_in);
     updateState(data.access_token, data.refresh_token, exp);
+    const tenantSelectionRequired =
+      data.tenant_selection_required === true ||
+      decodeJwtUser(data.access_token)?.tokenKind === "select";
+    return { tenantSelectionRequired };
+  }, [updateState]);
+
+  const selectTenant = useCallback(async (companyId: string) => {
+    const tok = accessTokenRef.current;
+    if (!tok) throw new Error("Not authenticated");
+    const data = await authSelectTenant(tok, companyId);
+    const exp = writeStorage(data.access_token, data.refresh_token, data.expires_in);
+    updateState(data.access_token, data.refresh_token, exp);
   }, [updateState]);
 
   const logout = useCallback(async () => {
@@ -175,10 +194,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshIfNeeded: () => refreshIfNeededRef.current(),
       forceRefresh: () => performRefreshRef.current(),
       onUnauthorized: () => logoutRef.current(),
+      onTenantSelectionRequired: () => {
+        // Safety net for 403 credential_not_scoped races (e.g. token swapped
+        // in another tab); TenantGuard normally redirects before any fetch.
+        if (window.location.pathname !== "/select-company") {
+          window.location.assign(
+            `/select-company?redirect=${encodeURIComponent(window.location.pathname)}`
+          );
+        }
+      },
     });
   }, []);
 
-  const value: AuthContextValue = { status, user, accessToken, login, logout, refreshIfNeeded };
+  const value: AuthContextValue = { status, user, accessToken, login, logout, refreshIfNeeded, selectTenant };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

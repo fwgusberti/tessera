@@ -114,6 +114,59 @@ describe("LoginPage", () => {
     });
   });
 
+  it("routes to /select-company preserving the redirect param when tenant selection is required", async () => {
+    mockSearchParams = new URLSearchParams("redirect=/documents");
+    mockLogin.mockResolvedValue({ tenantSelectionRequired: true });
+    render(<LoginPage />);
+
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "user@example.com" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "pass123" } });
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() =>
+      expect(mockPush).toHaveBeenCalledWith("/select-company?redirect=%2Fdocuments")
+    );
+  });
+
+  it("routes to /select-company with default destination when selection required and no redirect param", async () => {
+    mockLogin.mockResolvedValue({ tenantSelectionRequired: true });
+    render(<LoginPage />);
+
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "user@example.com" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "pass123" } });
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() =>
+      expect(mockPush).toHaveBeenCalledWith("/select-company?redirect=%2F")
+    );
+  });
+
+  it("routes straight to the destination when tenant selection is not required", async () => {
+    mockSearchParams = new URLSearchParams("redirect=/documents");
+    mockLogin.mockResolvedValue({ tenantSelectionRequired: false });
+    render(<LoginPage />);
+
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "user@example.com" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "pass123" } });
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/documents"));
+  });
+
+  it("sanitizes an unsafe redirect before routing to /select-company", async () => {
+    mockSearchParams = new URLSearchParams("redirect=//evil.example.com");
+    mockLogin.mockResolvedValue({ tenantSelectionRequired: true });
+    render(<LoginPage />);
+
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "user@example.com" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "pass123" } });
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() =>
+      expect(mockPush).toHaveBeenCalledWith("/select-company?redirect=%2F")
+    );
+  });
+
   it("redirects to '/' when status is already authenticated on mount", async () => {
     mockStatus = "authenticated";
     render(<LoginPage />);

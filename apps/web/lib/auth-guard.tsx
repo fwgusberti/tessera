@@ -23,7 +23,30 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-const ONBOARDING_EXEMPT = ["/login", "/register", "/onboarding"];
+const TENANT_EXEMPT = ["/login", "/register", "/select-company", "/forgot-password", "/reset-password"];
+
+export function TenantGuard({ children }: { children: React.ReactNode }) {
+  const { status, user } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const isExempt = TENANT_EXEMPT.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+  );
+  const mustSelect = status === "authenticated" && user?.tokenKind === "select" && !isExempt;
+
+  useEffect(() => {
+    if (mustSelect) {
+      router.replace(`/select-company?redirect=${encodeURIComponent(pathname)}`);
+    }
+  }, [mustSelect, router, pathname]);
+
+  if (mustSelect) return null;
+
+  return <>{children}</>;
+}
+
+const ONBOARDING_EXEMPT = ["/login", "/register", "/onboarding", "/select-company"];
 
 export function OnboardingGuard({ children }: { children: React.ReactNode }) {
   const { status } = useAuth();

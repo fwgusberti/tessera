@@ -25,6 +25,7 @@ interface ApiConfig {
   refreshIfNeeded(): Promise<string>;
   forceRefresh(): Promise<string>;
   onUnauthorized(): void;
+  onTenantSelectionRequired?(): void;
 }
 
 let authConfig: ApiConfig | null = null;
@@ -80,7 +81,14 @@ async function request<T>(path: string, options?: RequestInit, isRetry = false):
       throw new Error("Session expired. Please log in again.");
     }
     const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
-    throw new ApiError(err?.error?.message ?? res.statusText, err?.error?.code ?? null, res.status);
+    const code = err?.error?.code ?? null;
+    if (res.status === 403 && code === "credential_not_scoped") {
+      // Unscoped session hit a tenant-scoped endpoint: send the user to the
+      // company picker and never surface the server's raw message (SC-002).
+      authConfig?.onTenantSelectionRequired?.();
+      throw new ApiError("Please choose a company to continue.", code, res.status);
+    }
+    throw new ApiError(err?.error?.message ?? res.statusText, code, res.status);
   }
 
   if (res.status === 204) return undefined as T;
@@ -127,6 +135,25 @@ export async function authLogin(email: string, password: string): Promise<LoginR
 
 export async function authRefresh(refreshToken: string): Promise<RefreshResponse> {
   return rawPost<RefreshResponse>("/v1/auth/refresh", { refresh_token: refreshToken });
+}
+
+export async function authSelectTenant(
+  accessToken: string,
+  companyId: string,
+): Promise<RefreshResponse> {
+  const res = await fetch(`${API_URL}/v1/auth/select-tenant`, {
+    method: "POST",
+    body: JSON.stringify({ company_id: companyId }),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
+    throw new ApiError(err?.error?.message ?? res.statusText, err?.error?.code ?? null, res.status);
+  }
+  return res.json();
 }
 
 export async function authLogout(accessToken: string, refreshToken: string): Promise<void> {

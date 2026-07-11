@@ -103,10 +103,14 @@ export interface AgentCredential {
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
+export type TokenKind = "full" | "select" | "onboarding";
+
 export interface AuthUser {
   id: string;
   email: string;
   isAdmin: boolean;
+  tokenKind: TokenKind;
+  companyId: string | null;
 }
 
 export type AuthStatus = "loading" | "authenticated" | "unauthenticated";
@@ -121,6 +125,7 @@ export interface LoginResponse {
   refresh_token: string;
   token_type: "bearer";
   expires_in: number;
+  tenant_selection_required?: boolean;
 }
 
 export type RefreshResponse = LoginResponse;
