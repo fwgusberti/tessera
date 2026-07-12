@@ -69,6 +69,7 @@ class SqlChunkRepository(ChunkRepository):
             SELECT
                 c.id, c.document_version_id, c.document_id, c.space_id,
                 c.ordinal, c.text, c.confidentiality, c.language,
+                d.title AS document_title,
                 1 - (c.embedding <=> CAST(:embedding AS vector)) AS score
             FROM chunks c
             JOIN documents d ON d.id = c.document_id

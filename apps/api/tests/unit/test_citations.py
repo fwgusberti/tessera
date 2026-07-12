@@ -63,3 +63,13 @@ class TestBuildCitation:
         row = self._make_row(score=0.72)
         result = self._call(row)
         assert result["score"] == 0.72
+
+    def test_document_title_passed_through(self):
+        row = self._make_row(document_title="Getting Started")
+        result = self._call(row)
+        assert result["document_title"] == "Getting Started"
+
+    def test_document_title_none_when_row_lacks_it(self):
+        row = self._make_row()
+        result = self._call(row)
+        assert result["document_title"] is None

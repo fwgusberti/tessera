@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID
 
 
 def build_citation(chunk_row: dict[str, Any]) -> dict[str, Any]:
@@ -14,4 +13,5 @@ def build_citation(chunk_row: dict[str, Any]) -> dict[str, Any]:
         "document_version_id": str(chunk_row["document_version_id"]),
         "quote": chunk_row["text"][:200],
         "score": float(chunk_row.get("score", 0.0)),
+        "document_title": chunk_row.get("document_title"),
     }

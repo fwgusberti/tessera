@@ -1,8 +1,27 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import type { Components } from "react-markdown";
 import { api } from "@/lib/api";
 import { AuthGuard } from "@/lib/auth-guard";
+import MarkdownContent from "@/components/markdown/MarkdownContent";
+
+const compactHeading: Components["h1"] = ({ children }) => (
+  <p className="text-sm font-semibold text-slate-900 mt-2 mb-1">{children}</p>
+);
+
+const snippetOverrides: Components = {
+  h1: compactHeading,
+  h2: compactHeading,
+  h3: compactHeading,
+  h4: compactHeading,
+  h5: compactHeading,
+  h6: compactHeading,
+  // Links inside an excerpt never navigate on their own: a click anywhere on
+  // the card must do exactly one thing — open the document (research R3)
+  a: ({ children }) => <span className="text-indigo-600">{children}</span>,
+};
 
 interface Citation {
   chunk_id: string;
@@ -29,6 +48,7 @@ interface AnswerResponse {
 }
 
 export default function SearchPage() {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [answer, setAnswer] = useState<AnswerResponse | null>(null);
@@ -137,16 +157,34 @@ export default function SearchPage() {
       {results.length > 0 && (
         <div className="space-y-3">
           {results.map((r) => (
-            <div key={r.chunk_id} className="bg-white rounded border p-4">
-              <div className="flex justify-between items-start mb-2">
-                <span className="text-xs text-slate-400">
+            <div
+              key={r.chunk_id}
+              role="link"
+              tabIndex={0}
+              onClick={() => router.push(`/documents/${r.document_id}`)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  router.push(`/documents/${r.document_id}`);
+                }
+              }}
+              className="bg-white rounded border p-4 cursor-pointer transition-colors hover:border-indigo-500 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <div className="flex justify-between items-start gap-3 mb-2">
+                <p className="text-sm font-semibold text-slate-900">
+                  {r.citation.document_title?.trim() || "Untitled document"}
+                </p>
+                <span className="text-xs text-slate-400 shrink-0">
                   Score: {(r.score * 100).toFixed(0)}%
                 </span>
               </div>
-              <p className="text-sm text-slate-700">{r.snippet}</p>
-              {r.citation.document_title && (
-                <p className="text-xs text-indigo-600 mt-2">{r.citation.document_title}</p>
-              )}
+              <div className="overflow-hidden break-words">
+                <MarkdownContent
+                  content={r.snippet}
+                  className="prose prose-sm max-w-none text-slate-700"
+                  components={snippetOverrides}
+                />
+              </div>
             </div>
           ))}
         </div>
