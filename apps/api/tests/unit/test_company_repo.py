@@ -40,18 +40,12 @@ def mock_session():
 class TestSqlCompanyRepositoryCreate:
     @pytest.mark.anyio
     async def test_create_persists_company(self, mock_session, user_id):
-        from tessera_api.adapters.models import CompanyModel
         from tessera_api.adapters.repo import SqlCompanyRepository
 
         company = Company(name="Acme Corp", admin_user_id=user_id)
-        model = CompanyModel(
-            id=company.id,
-            name=company.name,
-            admin_user_id=user_id,
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC),
-        )
-        mock_session.refresh.side_effect = lambda m: setattr(m, "created_at", datetime.now(UTC)) or setattr(m, "updated_at", datetime.now(UTC))
+        mock_session.refresh.side_effect = lambda m: setattr(
+            m, "created_at", datetime.now(UTC)
+        ) or setattr(m, "updated_at", datetime.now(UTC))
 
         repo = SqlCompanyRepository(mock_session)
         # Patch refresh to set timestamps on the model added
@@ -111,7 +105,6 @@ class TestSqlCompanyRepositoryCreate:
 class TestSqlCompanyRepositoryMembership:
     @pytest.mark.anyio
     async def test_add_membership_persists_record(self, mock_session, company_id, user_id):
-        from tessera_api.adapters.models import CompanyMembershipModel
         from tessera_api.adapters.repo import SqlCompanyRepository
 
         membership = CompanyMembership(
@@ -167,9 +160,7 @@ class TestSqlCompanyRepositoryMembership:
         assert not hasattr(result, "space_id")
 
     @pytest.mark.anyio
-    async def test_add_membership_role_round_trips(
-        self, mock_session, company_id, user_id
-    ):
+    async def test_add_membership_role_round_trips(self, mock_session, company_id, user_id):
         from tessera_api.adapters.repo import SqlCompanyRepository
 
         membership = CompanyMembership(
@@ -254,7 +245,8 @@ class TestAddMembershipIdempotency:
     ):
         """Calling add_membership twice should not raise — the unique constraint in the DB
         is the final guard, but the router does a get_membership check first.
-        This test verifies that get_membership → conditional add_membership avoids duplicate calls."""
+        This test verifies that get_membership → conditional add_membership avoids duplicate calls.
+        """
         from tessera_api.adapters.repo import SqlCompanyRepository
         from tessera_core.domain.entities import CompanyMembership, CompanyRole
 
@@ -281,6 +273,7 @@ class TestAddMembershipIdempotency:
 
         # Second call: get_membership now returns the existing membership → add_membership NOT called
         from tessera_api.adapters.models import CompanyMembershipModel
+
         existing_model = CompanyMembershipModel(
             id=uuid.uuid4(),
             user_id=user_id,
@@ -385,6 +378,136 @@ class TestSearchMembersForSpace:
 
         executed_stmt = mock_session.execute.call_args[0][0]
         assert executed_stmt._limit_clause is not None
+
+
+class TestSqlCompanyRepositoryUpdateDetails:
+    @pytest.mark.anyio
+    async def test_update_details_persists_all_three_fields(
+        self, mock_session, company_id, user_id
+    ):
+        from tessera_api.adapters.models import CompanyModel
+        from tessera_api.adapters.repo import SqlCompanyRepository
+
+        model = CompanyModel(
+            id=company_id,
+            name="Old Name",
+            industry="Finance",
+            team_size="1-10",
+            admin_user_id=user_id,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = model
+        mock_session.execute.return_value = mock_result
+
+        repo = SqlCompanyRepository(mock_session)
+        result = await repo.update_details(
+            company_id, name="New Name", industry="Technology", team_size="51-200"
+        )
+
+        assert result is not None
+        assert isinstance(result, Company)
+        assert result.name == "New Name"
+        assert result.industry == "Technology"
+        assert result.team_size == "51-200"
+        assert model.name == "New Name"
+        assert model.industry == "Technology"
+        assert model.team_size == "51-200"
+        mock_session.flush.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_update_details_reflects_bumped_updated_at(
+        self, mock_session, company_id, user_id
+    ):
+        """The DB's onupdate bumps updated_at; the refreshed model value is returned."""
+        from tessera_api.adapters.models import CompanyModel
+        from tessera_api.adapters.repo import SqlCompanyRepository
+
+        original = datetime(2026, 1, 1, tzinfo=UTC)
+        bumped = datetime(2026, 7, 11, tzinfo=UTC)
+        model = CompanyModel(
+            id=company_id,
+            name="Old Name",
+            admin_user_id=user_id,
+            created_at=original,
+            updated_at=original,
+        )
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = model
+        mock_session.execute.return_value = mock_result
+
+        async def fake_refresh(m):
+            m.updated_at = bumped
+
+        mock_session.refresh.side_effect = fake_refresh
+
+        repo = SqlCompanyRepository(mock_session)
+        result = await repo.update_details(
+            company_id, name="New Name", industry=None, team_size=None
+        )
+
+        assert result is not None
+        assert result.updated_at == bumped
+        assert result.updated_at > original
+
+    @pytest.mark.anyio
+    async def test_update_details_returns_none_for_nonexistent_company(
+        self, mock_session, company_id
+    ):
+        from tessera_api.adapters.repo import SqlCompanyRepository
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = mock_result
+
+        repo = SqlCompanyRepository(mock_session)
+        result = await repo.update_details(
+            company_id, name="New Name", industry=None, team_size=None
+        )
+
+        assert result is None
+        mock_session.flush.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_details_scopes_to_the_given_company_only(
+        self, mock_session, company_id, user_id
+    ):
+        """Isolation test 4 (repo slice): the load is WHERE id = :company_id, so a
+        second seeded company can never be touched by the update."""
+        from tessera_api.adapters.models import CompanyModel
+        from tessera_api.adapters.repo import SqlCompanyRepository
+
+        target = CompanyModel(
+            id=company_id,
+            name="Target",
+            admin_user_id=user_id,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        other = CompanyModel(
+            id=uuid.uuid4(),
+            name="Other Co",
+            industry="Finance",
+            team_size="1-10",
+            admin_user_id=uuid.uuid4(),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = target
+        mock_session.execute.return_value = mock_result
+
+        repo = SqlCompanyRepository(mock_session)
+        await repo.update_details(company_id, name="Renamed", industry=None, team_size=None)
+
+        executed_stmt = mock_session.execute.call_args[0][0]
+        compiled = str(executed_stmt.compile(compile_kwargs={"literal_binds": False}))
+        assert "companies.id" in compiled
+        # The second company is untouched.
+        assert other.name == "Other Co"
+        assert other.industry == "Finance"
+        assert other.team_size == "1-10"
 
 
 class TestSqlDomainPolicyRepository:

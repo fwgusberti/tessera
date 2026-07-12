@@ -88,17 +88,21 @@ describe("CompanyMenu", () => {
       expect(mockSetActiveCompany).toHaveBeenCalledWith("2");
     });
 
-    it("shows admin-only settings link when role is admin", () => {
+    it("shows the Company link to admins", () => {
       render(<CompanyMenu />);
       fireEvent.click(screen.getByRole("button", { name: /acme corp/i }));
-      expect(screen.getByRole("link", { name: /company settings/i })).toBeInTheDocument();
+      const link = screen.getByRole("link", { name: /^company$/i });
+      expect(link).toBeInTheDocument();
+      expect(link).toHaveAttribute("href", "/settings/company");
     });
 
-    it("hides settings link when role is member", () => {
+    it("shows the Company link to non-admin members (FR-001)", () => {
       mockActiveCompany = { id: "2", name: "Beta LLC", role: "member" };
       render(<CompanyMenu />);
       fireEvent.click(screen.getByRole("button", { name: /beta llc/i }));
-      expect(screen.queryByRole("link", { name: /company settings/i })).not.toBeInTheDocument();
+      const link = screen.getByRole("link", { name: /^company$/i });
+      expect(link).toBeInTheDocument();
+      expect(link).toHaveAttribute("href", "/settings/company");
     });
   });
 });

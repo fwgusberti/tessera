@@ -1,5 +1,6 @@
 "use client";
 
+import MarkdownContent from "@/components/markdown/MarkdownContent";
 import type { ChatTurn } from "@/lib/types";
 
 interface MessageBubbleProps {
@@ -41,7 +42,13 @@ export default function MessageBubble({ turn }: MessageBubbleProps) {
                 </p>
               ) : (
                 <>
-                  <p className="whitespace-pre-wrap">{turn.answer.answer}</p>
+                  <div className="overflow-x-auto">
+                    <MarkdownContent
+                      content={turn.answer.answer ?? ""}
+                      className="prose prose-sm prose-slate max-w-none break-words"
+                      openLinksInNewTab
+                    />
+                  </div>
                   {turn.answer.citations && turn.answer.citations.length > 0 && (
                     <div className="mt-2">
                       <p className="text-xs text-slate-400 mt-2">Sources</p>

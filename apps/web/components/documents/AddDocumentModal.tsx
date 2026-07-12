@@ -8,13 +8,14 @@ import type { Document, DocumentVersion, Space } from "@/lib/types";
 interface AddDocumentModalProps {
   open: boolean;
   spaces: Space[];
+  initialSpaceId?: string;
   onClose: () => void;
   onCreated: (document: Document) => void;
 }
 
-export function AddDocumentModal({ open, spaces, onClose, onCreated }: AddDocumentModalProps) {
+export function AddDocumentModal({ open, spaces, initialSpaceId, onClose, onCreated }: AddDocumentModalProps) {
   const [title, setTitle] = useState("");
-  const [spaceId, setSpaceId] = useState("");
+  const [spaceId, setSpaceId] = useState(initialSpaceId ?? "");
   const [language, setLanguage] = useState("pt-BR");
   const [confidentiality, setConfidentiality] = useState<"internal" | "restricted" | "public">("internal");
   const [contentMarkdown, setContentMarkdown] = useState("");
@@ -34,7 +35,7 @@ export function AddDocumentModal({ open, spaces, onClose, onCreated }: AddDocume
   useEffect(() => {
     if (!open) {
       setTitle("");
-      setSpaceId("");
+      setSpaceId(initialSpaceId ?? "");
       setLanguage("pt-BR");
       setConfidentiality("internal");
       setContentMarkdown("");
@@ -50,7 +51,7 @@ export function AddDocumentModal({ open, spaces, onClose, onCreated }: AddDocume
       setLastAiSuggestion(null);
       setRefineText("");
     }
-  }, [open]);
+  }, [open, initialSpaceId]);
 
   useEffect(() => {
     if (!spaceId) {

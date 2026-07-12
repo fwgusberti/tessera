@@ -1,7 +1,6 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import MarkdownContent from "@/components/markdown/MarkdownContent";
 import type { DocumentVersion } from "@/lib/types";
 
 interface DocumentContentProps {
@@ -13,9 +12,5 @@ export function DocumentContent({ version }: DocumentContentProps) {
     return <p className="text-sm text-slate-400 italic">No content available for this document.</p>;
   }
 
-  return (
-    <div className="prose prose-slate max-w-none">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{version.content_markdown}</ReactMarkdown>
-    </div>
-  );
+  return <MarkdownContent content={version.content_markdown} className="prose prose-slate max-w-none" />;
 }

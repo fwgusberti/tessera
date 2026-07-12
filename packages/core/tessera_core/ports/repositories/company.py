@@ -15,6 +15,16 @@ class CompanyRepository(ABC):
     async def get_by_id(self, company_id: UUID) -> Company | None: ...
 
     @abstractmethod
+    async def update_details(
+        self, company_id: UUID, *, name: str, industry: str | None, team_size: str | None
+    ) -> Company | None:
+        """Update the company's editable profile fields, scoped to ``company_id``.
+
+        Returns the saved ``Company``, or ``None`` when no row matches.
+        """
+        ...
+
+    @abstractmethod
     async def add_membership(self, membership: CompanyMembership) -> CompanyMembership: ...
 
     @abstractmethod

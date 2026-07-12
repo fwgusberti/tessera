@@ -12,6 +12,7 @@ import { SetParentModal } from "@/components/spaces/SetParentModal";
 import { RenameSpaceModal } from "@/components/spaces/RenameSpaceModal";
 import { DeleteSpaceModal } from "@/components/spaces/DeleteSpaceModal";
 import { AddSpaceModal } from "@/components/spaces/AddSpaceModal";
+import { AddDocumentModal } from "@/components/documents/AddDocumentModal";
 
 export default function SpaceFolderPage() {
   const params = useParams();
@@ -26,6 +27,7 @@ export default function SpaceFolderPage() {
   const [renamingSpace, setRenamingSpace] = useState<Space | null>(null);
   const [deletingSpace, setDeletingSpace] = useState<Space | null>(null);
   const [addingSpace, setAddingSpace] = useState(false);
+  const [addingDocument, setAddingDocument] = useState(false);
 
   useEffect(() => {
     if (!folderId) return;
@@ -57,6 +59,13 @@ export default function SpaceFolderPage() {
     );
   }
 
+  function handleDocumentCreated(created: Document) {
+    if (created.space_id === folderId) {
+      setDocuments((prev) => [...prev, created]);
+    }
+    setAddingDocument(false);
+  }
+
   function handleSpaceCreated(created: Space) {
     setAccesses((prev) => [
       ...prev,
@@ -65,6 +74,8 @@ export default function SpaceFolderPage() {
   }
 
   const folder = accesses.find((a) => a.space.id === folderId)?.space ?? null;
+  const currentRole = accesses.find((a) => a.space.id === folderId)?.effective_role;
+  const canAddDocument = currentRole === "editor" || currentRole === "admin";
   const subfolders = directChildren(accesses, folderId);
   const isEmpty = subfolders.length === 0 && documents.length === 0;
 
@@ -83,12 +94,22 @@ export default function SpaceFolderPage() {
             />
             <div className="flex items-center justify-between">
               <h1 className="text-2xl font-bold text-slate-900">{folder.name}</h1>
-              <button
-                onClick={() => setAddingSpace(true)}
-                className="px-4 py-2 text-sm text-white bg-indigo-600 rounded hover:bg-indigo-700"
-              >
-                Add Space
-              </button>
+              <div className="flex items-center gap-3">
+                {canAddDocument && (
+                  <button
+                    onClick={() => setAddingDocument(true)}
+                    className="px-4 py-2 text-sm text-white bg-indigo-600 rounded hover:bg-indigo-700"
+                  >
+                    Add Document
+                  </button>
+                )}
+                <button
+                  onClick={() => setAddingSpace(true)}
+                  className="px-4 py-2 text-sm text-white bg-indigo-600 rounded hover:bg-indigo-700"
+                >
+                  Add Space
+                </button>
+              </div>
             </div>
             {isEmpty ? (
               <p className="text-sm text-slate-500">This folder has no sub-folders or documents.</p>
@@ -131,6 +152,13 @@ export default function SpaceFolderPage() {
             }}
           />
         )}
+        <AddDocumentModal
+          open={addingDocument}
+          spaces={accesses.map((a) => a.space)}
+          initialSpaceId={folderId}
+          onClose={() => setAddingDocument(false)}
+          onCreated={handleDocumentCreated}
+        />
         {addingSpace && (
           <AddSpaceModal
             parentSpaceId={folderId}

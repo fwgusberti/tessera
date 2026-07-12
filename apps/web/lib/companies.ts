@@ -100,6 +100,29 @@ export async function getMyCompanies(): Promise<CompanyEntry[]> {
   return res.companies;
 }
 
+export interface CompanyProfile {
+  id: string;
+  name: string;
+  industry: string | null;
+  team_size: string | null;
+  created_at: string; // ISO 8601
+  role: "admin" | "member"; // caller's role in this company
+}
+
+export interface UpdateCompanyData {
+  name: string;
+  industry: string | null;
+  team_size: string | null;
+}
+
+export async function getCurrentCompany(): Promise<CompanyProfile> {
+  return api.get<CompanyProfile>("/v1/companies/current");
+}
+
+export async function updateCurrentCompany(data: UpdateCompanyData): Promise<CompanyProfile> {
+  return api.patch<CompanyProfile>("/v1/companies/current", data);
+}
+
 export interface CompanyMember {
   user_id: string;
   display_name: string;

@@ -24,7 +24,7 @@ from tessera_api.adapters.repo import (
     SqlSpaceRepository,
     SqlUserRepository,
 )
-from tessera_api.auth.oidc import CompanyAdminContext, CurrentUser
+from tessera_api.auth.oidc import CompanyAdminContext, CompanyMemberContext, CurrentUser
 from tessera_api.routers.invitations import INVITATION_TTL_DAYS, send_invitation_email
 from tessera_core.domain.entities import (
     Company,
@@ -88,6 +88,23 @@ class AddCompanyMemberRequest(BaseModel):
     role: CompanyRole = CompanyRole.MEMBER
 
 
+class CompanyProfileResponse(BaseModel):
+    id: str
+    name: str
+    industry: str | None
+    team_size: str | None
+    created_at: datetime | None
+    role: Literal["admin", "member"]
+
+
+class UpdateCompanyRequest(BaseModel):
+    # Name limits are enforced in the handler so violations surface as the
+    # contract's `invalid_name` code rather than a bare pydantic 422.
+    name: str
+    industry: str | None = Field(default=None, max_length=100)
+    team_size: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -136,6 +153,122 @@ async def get_my_companies(user_info: CurrentUser, session: SessionDep) -> Compa
     entries.sort(key=lambda e: e.name)
 
     return CompanyMeResponse(companies=entries)
+
+
+@router.get("/companies/current")
+async def get_current_company(
+    ctx: CompanyMemberContext, session: SessionDep
+) -> CompanyProfileResponse:
+    """Read the active company's profile (any member).
+
+    The company id derives solely from the authenticated ``CompanyMemberContext``
+    (JWT ``company_id`` claim) — never from client input (Principle VI, FR-009).
+    ``role`` is the caller's own membership role so the client can decide whether
+    to offer edit controls; the server remains the enforcement point.
+    """
+    _user_info, company_id, membership = ctx
+
+    company_repo = SqlCompanyRepository(session)
+    company = await company_repo.get_by_id(company_id)
+    if company is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "not_found", "message": "Company not found"}},
+        )
+
+    return CompanyProfileResponse(
+        id=str(company.id),
+        name=company.name,
+        industry=company.industry,
+        team_size=company.team_size,
+        created_at=company.created_at,
+        role=membership.role.value,
+    )
+
+
+@router.patch("/companies/current")
+async def update_current_company(
+    body: UpdateCompanyRequest, ctx: CompanyAdminContext, session: SessionDep
+) -> CompanyProfileResponse:
+    """Update the active company's profile (admin only) — validation mirrors
+    ``POST /v1/companies``; every successful save writes a ``company.updated``
+    audit record with a changed-fields map (FR-010, SC-004).
+
+    The company id derives solely from ``CompanyAdminContext`` and the update is
+    scoped ``WHERE id = :company_id`` — cross-tenant writes are inexpressible
+    (Principle VI). Concurrency is last-write-wins per the spec assumption.
+    """
+    user_info, company_id, membership = ctx
+    admin_id = UUID(user_info["sub"])
+
+    name = body.name.strip()
+    if not name or len(name) > 255:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": {
+                    "code": "invalid_name",
+                    "message": "Company name must be 1-255 characters and not blank",
+                }
+            },
+        )
+
+    if body.team_size is not None and body.team_size not in VALID_TEAM_SIZES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": {
+                    "code": "invalid_team_size",
+                    "message": f"team_size must be one of {VALID_TEAM_SIZES}",
+                }
+            },
+        )
+
+    company_repo = SqlCompanyRepository(session)
+    current = await company_repo.get_by_id(company_id)
+    if current is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "not_found", "message": "Company not found"}},
+        )
+
+    updated = await company_repo.update_details(
+        company_id, name=name, industry=body.industry, team_size=body.team_size
+    )
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "not_found", "message": "Company not found"}},
+        )
+
+    changed = {
+        field: {"from": old_value, "to": new_value}
+        for field, old_value, new_value in (
+            ("name", current.name, updated.name),
+            ("industry", current.industry, updated.industry),
+            ("team_size", current.team_size, updated.team_size),
+        )
+        if old_value != new_value
+    }
+
+    await write_audit(
+        session,
+        actor_type="user",
+        actor_id=admin_id,
+        action="company.updated",
+        entity_type="company",
+        entity_id=company_id,
+        metadata={"company_id": str(company_id), "changed": changed},
+    )
+
+    return CompanyProfileResponse(
+        id=str(updated.id),
+        name=updated.name,
+        industry=updated.industry,
+        team_size=updated.team_size,
+        created_at=updated.created_at,
+        role=membership.role.value,
+    )
 
 
 @router.get("/companies/members")
@@ -545,7 +678,6 @@ async def create_company(
 
 @router.get("/companies/suggestions")
 async def get_suggestions(user_info: CurrentUser, session: SessionDep) -> dict:
-    user_id = UUID(user_info["sub"])
     email = user_info.get("email", "")
     domain = _email_domain(email) if "@" in email else ""
 
@@ -747,7 +879,7 @@ async def join_company(
                     "company_name": company.name,
                 }
 
-            join_request = await jr_repo.create(JoinRequest(user_id=user_id, company_id=company_id))
+            await jr_repo.create(JoinRequest(user_id=user_id, company_id=company_id))
 
             # Notify admin
             try:

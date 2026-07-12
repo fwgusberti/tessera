@@ -101,15 +101,13 @@ export function CompanyMenu() {
             >
               + Create new company
             </button>
-            {activeCompany?.role === "admin" && (
-              <Link
-                href="/settings/company"
-                onClick={() => setOpen(false)}
-                className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-              >
-                Company settings
-              </Link>
-            )}
+            <Link
+              href="/settings/company"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              Company
+            </Link>
           </div>
         </div>
       )}

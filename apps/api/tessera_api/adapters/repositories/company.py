@@ -63,6 +63,22 @@ class SqlCompanyRepository(CompanyRepository):
         model = result.scalar_one_or_none()
         return _company_from_model(model) if model else None
 
+    async def update_details(
+        self, company_id: UUID, *, name: str, industry: str | None, team_size: str | None
+    ) -> Company | None:
+        result = await self._session.execute(
+            select(CompanyModel).where(CompanyModel.id == company_id)
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            return None
+        model.name = name
+        model.industry = industry
+        model.team_size = team_size
+        await self._session.flush()
+        await self._session.refresh(model)
+        return _company_from_model(model)
+
     async def add_membership(self, membership: CompanyMembership) -> CompanyMembership:
         model = CompanyMembershipModel(
             id=membership.id,
