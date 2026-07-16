@@ -80,6 +80,20 @@ describe("User Management page", () => {
     );
   });
 
+  it('renders "Unknown user" when both display_name and email are blank (feature 065, US3)', async () => {
+    const members: CompanyMember[] = [
+      { user_id: "u4", display_name: "", email: "", role: "member" },
+    ];
+    mockGetCompanyMembers.mockResolvedValue(members);
+
+    const { default: UsersPage } = await import("@/app/users/page");
+    render(<UsersPage />);
+
+    await waitFor(() => expect(screen.getByText("Unknown user")).toBeInTheDocument());
+    // The identifier is never used as the label.
+    expect(screen.queryByText("u4")).not.toBeInTheDocument();
+  });
+
   it("shows an access-denied message and no roster when the API returns 403", async () => {
     mockGetCompanyMembers.mockRejectedValue(new Error("Access denied"));
 

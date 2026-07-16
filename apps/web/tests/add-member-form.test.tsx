@@ -59,6 +59,37 @@ describe("AddMemberForm", () => {
     expect(screen.getByRole("combobox")).toBeInTheDocument();
   });
 
+  it("labels search results with the fallback chain display_name → email → Unknown user (feature 065, US3)", async () => {
+    mockApi.get.mockResolvedValue({
+      members: [
+        { user_id: "named-id", display_name: "Named Person", email: "named@acme.com" },
+        { user_id: "blank-name-id", display_name: "", email: "only-email@acme.com" },
+        { user_id: "no-identity-id", display_name: "", email: "" },
+      ],
+    });
+
+    const { AddMemberForm } = await import("@/components/members/AddMemberForm");
+    render(<AddMemberForm spaceId={SPACE_ID} onSuccess={vi.fn()} />);
+
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByPlaceholderText(/search by name or email/i), {
+      target: { value: "an" },
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+    vi.useRealTimers();
+
+    await waitFor(() => expect(screen.getByText("Named Person")).toBeInTheDocument());
+    // Blank display_name → the email carries the primary (font-medium) label.
+    const emailLabel = screen.getAllByText("only-email@acme.com")
+      .find((el) => el.className.includes("font-medium"));
+    expect(emailLabel).toBeTruthy();
+    // Both blank → literal "Unknown user"; never the identifier.
+    expect(screen.getByText("Unknown user")).toBeInTheDocument();
+    expect(screen.queryByText("no-identity-id")).not.toBeInTheDocument();
+  });
+
   it("does not search below 2 characters", async () => {
     const onSuccess = vi.fn();
     const { AddMemberForm } = await import("@/components/members/AddMemberForm");

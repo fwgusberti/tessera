@@ -140,7 +140,9 @@ export function AddMemberForm({ spaceId, onSuccess }: AddMemberFormProps) {
                 onClick={() => handleSelect(member)}
                 className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-slate-100"
               >
-                <span className="font-medium text-slate-800">{member.display_name}</span>{" "}
+                <span className="font-medium text-slate-800">
+                  {member.display_name || member.email || "Unknown user"}
+                </span>{" "}
                 <span className="text-slate-500">{member.email}</span>
               </button>
             </li>
@@ -150,7 +152,10 @@ export function AddMemberForm({ spaceId, onSuccess }: AddMemberFormProps) {
 
       {selected && (
         <div className="text-sm text-slate-700">
-          Selected: <span className="font-medium">{selected.display_name}</span>{" "}
+          Selected:{" "}
+          <span className="font-medium">
+            {selected.display_name || selected.email || "Unknown user"}
+          </span>{" "}
           <span className="text-slate-500">({selected.email})</span>{" "}
           <button
             type="button"

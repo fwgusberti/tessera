@@ -92,7 +92,7 @@ export default function UsersPage() {
                   >
                     <td className="py-3 pr-4">
                       <div className="font-medium text-slate-800">
-                        {member.display_name || member.email}
+                        {member.display_name || member.email || "Unknown user"}
                       </div>
                       {member.email && (
                         <div className="text-xs text-slate-500">{member.email}</div>

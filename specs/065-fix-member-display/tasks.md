@@ -90,13 +90,13 @@ Monorepo web application per plan.md: `packages/core` (domain + ports), `apps/ap
 
 ### Tests for User Story 3 (write FIRST, ensure they FAIL) ⚠️
 
-- [ ] T016 [P] [US3] Component tests: company Users page row with blank `display_name` and blank `email` renders "Unknown user" (currently `display_name || email` can render empty); AddMemberForm search-result label falls back `display_name → email → "Unknown user"` (currently bare `display_name`) — in apps/web/tests/members.test.tsx (or the existing suite covering app/users/page.tsx if separate)
+- [X] T016 [P] [US3] Component tests: company Users page row with blank `display_name` and blank `email` renders "Unknown user" (currently `display_name || email` can render empty); AddMemberForm search-result label falls back `display_name → email → "Unknown user"` (currently bare `display_name`) — in apps/web/tests/members.test.tsx (or the existing suite covering app/users/page.tsx if separate)
 
 ### Implementation for User Story 3
 
-- [ ] T017 [P] [US3] Add the "Unknown user" terminal fallback to the member label in apps/web/app/users/page.tsx (`display_name || email || "Unknown user"`)
-- [ ] T018 [P] [US3] Apply the same fallback chain to search-result labels in apps/web/components/members/AddMemberForm.tsx
-- [ ] T019 [US3] Verify US3: run `cd apps/web && npx vitest run tests/members.test.tsx` — all US3 tests green, zero new failures
+- [X] T017 [P] [US3] Add the "Unknown user" terminal fallback to the member label in apps/web/app/users/page.tsx (`display_name || email || "Unknown user"`)
+- [X] T018 [P] [US3] Apply the same fallback chain to search-result labels in apps/web/components/members/AddMemberForm.tsx
+- [X] T019 [US3] Verify US3: run `cd apps/web && npx vitest run tests/members.test.tsx` — all US3 tests green, zero new failures
 
 **Checkpoint**: All member-listing surfaces present identity consistently; no surface can render a UUID as a label.
 
