@@ -106,9 +106,9 @@ Monorepo web application per plan.md: `packages/core` (domain + ports), `apps/ap
 
 **Purpose**: Full-feature validation per quickstart.md and quality gates.
 
-- [ ] T020 Run the full quickstart automated validation (quickstart.md §1): core, API, and web suites plus `uv run ruff check . && uv run black --check .` on touched Python packages — assert zero new failures vs the T001 baseline
-- [ ] T021 [P] API-level validation per quickstart.md §2: curl the enriched endpoint with a seeded space (every row has `display_name`/`email`, ordered by `display_name`) and cross-tenant probe returns generic 404 with no identity data
-- [ ] T022 [P] Browser validation per quickstart.md §3 at `http://192.168.0.8:3000` (CORS allows only this origin): members panel scenarios (US1), role change/removal (US2), Users page + add-member search consistency (US3), non-admin read-only view (edge case)
+- [X] T020 Run the full quickstart automated validation (quickstart.md §1): core, API, and web suites plus `uv run ruff check . && uv run black --check .` on touched Python packages — assert zero new failures vs the T001 baseline
+- [X] T021 [P] API-level validation per quickstart.md §2: curl the enriched endpoint with a seeded space (every row has `display_name`/`email`, ordered by `display_name`) and cross-tenant probe returns generic 404 with no identity data
+- [X] T022 [P] Browser validation per quickstart.md §3 at `http://192.168.0.8:3000` (CORS allows only this origin): members panel scenarios (US1), role change/removal (US2), Users page + add-member search consistency (US3), non-admin read-only view (edge case)
 
 ---
 
