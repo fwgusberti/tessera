@@ -242,3 +242,91 @@ describe("SpaceMembersPanel identity display", () => {
     expect(rendered).not.toContain(NO_IDENTITY_UUID);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SpaceMembersPanel — actions target the row's user_id (feature 065, US2)
+// ---------------------------------------------------------------------------
+
+describe("SpaceMembersPanel actions target user_id", () => {
+  const FIRST_UUID = "dddddddd-1111-2222-3333-444444444444";
+  const SECOND_UUID = "eeeeeeee-1111-2222-3333-444444444444";
+
+  // Two members deliberately sharing a display name — only email tells them apart.
+  const twins = [
+    {
+      id: "tw1",
+      space_id: SPACE_ID,
+      user_id: FIRST_UUID,
+      display_name: "Alex Silva",
+      email: "alex.first@example.com",
+      role: "viewer",
+      invited_by_user_id: null,
+      created_at: "2026-07-01T12:00:00Z",
+    },
+    {
+      id: "tw2",
+      space_id: SPACE_ID,
+      user_id: SECOND_UUID,
+      display_name: "Alex Silva",
+      email: "alex.second@example.com",
+      role: "viewer",
+      invited_by_user_id: null,
+      created_at: "2026-07-01T13:00:00Z",
+    },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("disambiguates members sharing a display name by their email lines", async () => {
+    mockApi.get.mockResolvedValue({ members: twins });
+
+    const { SpaceMembersPanel } = await import("@/components/members/SpaceMembersPanel");
+    render(<SpaceMembersPanel spaceId={SPACE_ID} myRole="admin" />);
+
+    const names = await screen.findAllByText("Alex Silva");
+    expect(names).toHaveLength(2);
+    expect(screen.getByText("alex.first@example.com")).toBeInTheDocument();
+    expect(screen.getByText("alex.second@example.com")).toBeInTheDocument();
+  });
+
+  it("fires PUT /v1/spaces/{space_id}/members/{user_id} with the row's user_id on role change", async () => {
+    mockApi.get.mockResolvedValue({ members: twins });
+    mockApi.put.mockResolvedValue({});
+
+    const { SpaceMembersPanel } = await import("@/components/members/SpaceMembersPanel");
+    render(<SpaceMembersPanel spaceId={SPACE_ID} myRole="admin" />);
+
+    await screen.findAllByText("Alex Silva");
+    const selects = screen.getAllByRole("combobox");
+    fireEvent.change(selects[1], { target: { value: "editor" } });
+
+    await waitFor(() => {
+      expect(mockApi.put).toHaveBeenCalledWith(
+        `/v1/spaces/${SPACE_ID}/members/${SECOND_UUID}`,
+        { role: "editor" }
+      );
+    });
+  });
+
+  it("fires DELETE /v1/spaces/{space_id}/members/{user_id} with the row's user_id on removal", async () => {
+    mockApi.get.mockResolvedValue({ members: twins });
+    mockApi.delete.mockResolvedValue({});
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const { SpaceMembersPanel } = await import("@/components/members/SpaceMembersPanel");
+    render(<SpaceMembersPanel spaceId={SPACE_ID} myRole="admin" />);
+
+    await screen.findAllByText("Alex Silva");
+    const removeButtons = screen.getAllByRole("button", { name: /remove/i });
+    fireEvent.click(removeButtons[1]);
+
+    await waitFor(() => {
+      expect(mockApi.delete).toHaveBeenCalledWith(
+        `/v1/spaces/${SPACE_ID}/members/${SECOND_UUID}`
+      );
+    });
+    confirmSpy.mockRestore();
+  });
+});

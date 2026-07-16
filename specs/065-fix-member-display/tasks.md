@@ -70,13 +70,13 @@ Monorepo web application per plan.md: `packages/core` (domain + ports), `apps/ap
 
 ### Tests for User Story 2 (write FIRST, ensure they FAIL) ⚠️
 
-- [ ] T012 [P] [US2] Component tests: role change fires `PUT /v1/spaces/{space_id}/members/{user_id}` and removal fires `DELETE /v1/spaces/{space_id}/members/{user_id}` using the row's `user_id` (not the display label); two members sharing a display name are disambiguated by their email lines — in apps/web/tests/members.test.tsx
-- [ ] T013 [P] [US2] Integration test: after the enriched list response, `PUT` role change and `DELETE` removal against a listed member's `user_id` still succeed with unchanged semantics (mutation endpoints untouched by the enrichment) — in apps/api/tests/integration/test_members.py
+- [X] T012 [P] [US2] Component tests: role change fires `PUT /v1/spaces/{space_id}/members/{user_id}` and removal fires `DELETE /v1/spaces/{space_id}/members/{user_id}` using the row's `user_id` (not the display label); two members sharing a display name are disambiguated by their email lines — in apps/web/tests/members.test.tsx
+- [X] T013 [P] [US2] Integration test: after the enriched list response, `PUT` role change and `DELETE` removal against a listed member's `user_id` still succeed with unchanged semantics (mutation endpoints untouched by the enrichment) — in apps/api/tests/integration/test_members.py
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] Confirm/adjust action handlers in apps/web/components/members/SpaceMembersPanel.tsx so the role dropdown and Remove button keep sourcing `member.user_id` for their API calls after the T010 label changes (display-only change; fix any handler that reads the rendered label)
-- [ ] T015 [US2] Verify US2: run `cd apps/web && npx vitest run tests/members.test.tsx` and `cd apps/api && uv run pytest tests/integration/test_members.py -v` — all US2 tests green, zero new failures
+- [X] T014 [US2] Confirm/adjust action handlers in apps/web/components/members/SpaceMembersPanel.tsx so the role dropdown and Remove button keep sourcing `member.user_id` for their API calls after the T010 label changes (display-only change; fix any handler that reads the rendered label)
+- [X] T015 [US2] Verify US2: run `cd apps/web && npx vitest run tests/members.test.tsx` and `cd apps/api && uv run pytest tests/integration/test_members.py -v` — all US2 tests green, zero new failures
 
 **Checkpoint**: Management actions verified to target the correct member with readable identity throughout.
 

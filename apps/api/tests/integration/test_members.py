@@ -496,6 +496,93 @@ class TestListMembersIdentityIntegration:
         mock_membership_repo.list_by_space_with_identity.assert_not_awaited()
 
 
+class TestMutationsUnchangedAfterEnrichment:
+    """Feature 065 US2: role change and removal keep targeting user_id from the
+    enriched list rows — mutation semantics are untouched by the identity fields."""
+
+    def test_role_change_and_removal_target_listed_user_id(self):
+        from fastapi.testclient import TestClient
+
+        from tessera_api.main import app
+
+        space_id = uuid.uuid4()
+        actor_id = uuid.uuid4()
+        target_id = uuid.uuid4()
+        actor = _make_user(actor_id)
+
+        rows = [
+            _listing(space_id, actor_id, "Actor Admin", "actor@acme.example", SpaceRole.ADMIN),
+            _listing(space_id, target_id, "Target User", "target@acme.example", SpaceRole.VIEWER),
+        ]
+        memberships = [
+            _membership(space_id, actor_id, SpaceRole.ADMIN),
+            _membership(space_id, target_id, SpaceRole.VIEWER),
+        ]
+
+        space_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(
+            return_value=Space(slug="s", name="S", sector="x", company_id=COMPANY_ID)
+        )
+
+        with (
+            _member_read_auth(),
+            patch(
+                "tessera_api.routers.members.validate_space_for_company",
+                new=AsyncMock(return_value=None),
+            ),
+            patch("tessera_api.routers.members.SqlSpaceRepository", return_value=space_repo),
+            patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
+            patch(
+                "tessera_api.routers.members.SqlSpaceMembershipRepository"
+            ) as mock_membership_repo_cls,
+            patch("tessera_api.routers.members.SqlAuditRepository", return_value=AsyncMock()),
+        ):
+            mock_user_repo = AsyncMock()
+            mock_user_repo.get_by_id.return_value = actor
+            mock_user_repo_cls.return_value = mock_user_repo
+
+            mock_membership_repo = AsyncMock()
+            mock_membership_repo.list_by_space_with_identity.return_value = rows
+            mock_membership_repo.list_by_space.return_value = memberships
+            mock_membership_repo.get.return_value = memberships[1]
+            mock_membership_repo.count_admins.return_value = 2
+            mock_membership_repo.update_role.return_value = _membership(
+                space_id, target_id, SpaceRole.EDITOR
+            )
+            mock_membership_repo.remove.return_value = None
+            mock_membership_repo_cls.return_value = mock_membership_repo
+
+            with TestClient(app) as client:
+                headers = _make_jwt_header(actor_id)
+
+                listed = client.get(f"/v1/spaces/{space_id}/members", headers=headers)
+                assert listed.status_code == 200
+                target_row = next(
+                    m for m in listed.json()["members"] if m["email"] == "target@acme.example"
+                )
+
+                put_resp = client.put(
+                    f"/v1/spaces/{space_id}/members/{target_row['user_id']}",
+                    json={"role": "editor"},
+                    headers=headers,
+                )
+                assert put_resp.status_code == 200
+                assert put_resp.json()["membership"]["role"] == "editor"
+
+                del_resp = client.delete(
+                    f"/v1/spaces/{space_id}/members/{target_row['user_id']}",
+                    headers=headers,
+                )
+                assert del_resp.status_code == 204
+
+        # Both mutations landed on the user_id taken from the enriched list row.
+        update_args = mock_membership_repo.update_role.await_args.args
+        assert update_args[0] == space_id
+        assert update_args[1] == target_id
+        remove_args = mock_membership_repo.remove.await_args.args
+        assert remove_args == (space_id, target_id)
+
+
 # ---------------------------------------------------------------------------
 # Feature 065: repository-level tenant scoping (live PostgreSQL)
 # ---------------------------------------------------------------------------
