@@ -82,12 +82,12 @@ export function SpaceMembersPanel({ spaceId, myRole }: SpaceMembersPanelProps) {
           <tbody>
             {members.map((member) => (
               <tr key={member.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="py-3 pr-4">
-                  <div className="font-medium text-slate-800">
-                    {member.display_name || member.user_id}
+                <td className="py-3 pr-4 max-w-[16rem]">
+                  <div className="font-medium text-slate-800 truncate">
+                    {member.display_name || member.email || "Unknown user"}
                   </div>
-                  {member.email && (
-                    <div className="text-xs text-slate-500">{member.email}</div>
+                  {member.display_name && member.email && (
+                    <div className="text-xs text-slate-500 truncate">{member.email}</div>
                   )}
                 </td>
                 <td className="py-3 pr-4">

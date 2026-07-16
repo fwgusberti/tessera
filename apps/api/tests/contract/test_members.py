@@ -108,8 +108,33 @@ class TestInviteMemberContract:
             assert exc_info.value.status_code == 403
 
 
+def _make_listing(
+    space_id: uuid.UUID,
+    user_id: uuid.UUID,
+    role: SpaceRole,
+    display_name: str = "Actor",
+    email: str = "actor@example.com",
+):
+    from datetime import UTC, datetime
+
+    from tessera_core.domain.entities import SpaceMemberListing
+
+    now = datetime.now(UTC)
+    return SpaceMemberListing(
+        id=uuid.uuid4(),
+        space_id=space_id,
+        user_id=user_id,
+        display_name=display_name,
+        email=email,
+        role=role,
+        invited_by_user_id=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
 class TestListMembersContract:
-    """GET /spaces/{id}/members — must return member list."""
+    """GET /spaces/{id}/members — must return the identity-enriched member list."""
 
     @pytest.mark.anyio
     async def test_list_returns_members(self):
@@ -118,14 +143,14 @@ class TestListMembersContract:
         space_id = uuid.uuid4()
         actor_id = uuid.uuid4()
         session = AsyncMock()
-        memberships = [_make_membership(space_id, actor_id, SpaceRole.ADMIN)]
+        listings = [_make_listing(space_id, actor_id, SpaceRole.ADMIN)]
 
         actor = _make_user(actor_id)
         mock_user = AsyncMock()
         mock_user.get_by_id.return_value = actor
 
         mock_membership_repo = AsyncMock()
-        mock_membership_repo.list_by_space.return_value = memberships
+        mock_membership_repo.list_by_space_with_identity.return_value = listings
 
         with (
             patch("tessera_api.routers.members.validate_space_for_company", new=AsyncMock(return_value=None)),
@@ -136,6 +161,85 @@ class TestListMembersContract:
 
         assert "members" in result
         assert len(result["members"]) == 1
+
+    @pytest.mark.anyio
+    async def test_enriched_row_carries_full_shape(self):
+        """Each row: {id, space_id, user_id, display_name, email, role,
+        invited_by_user_id, created_at, updated_at} — additive over the old shape."""
+        from tessera_api.routers.members import list_members
+
+        space_id = uuid.uuid4()
+        actor_id = uuid.uuid4()
+        session = AsyncMock()
+        listings = [
+            _make_listing(
+                space_id, actor_id, SpaceRole.ADMIN,
+                display_name="Ada Lovelace", email="ada@acme.example",
+            )
+        ]
+
+        mock_user = AsyncMock()
+        mock_user.get_by_id.return_value = _make_user(actor_id)
+
+        mock_membership_repo = AsyncMock()
+        mock_membership_repo.list_by_space_with_identity.return_value = listings
+
+        with (
+            patch("tessera_api.routers.members.validate_space_for_company", new=AsyncMock(return_value=None)),
+            patch("tessera_api.routers.members.SqlUserRepository", return_value=mock_user),
+            patch("tessera_api.routers.members.SqlSpaceMembershipRepository", return_value=mock_membership_repo),
+        ):
+            result = await list_members(space_id, _ctx(actor_id), session)
+
+        (row,) = result["members"]
+        assert set(row) == {
+            "id",
+            "space_id",
+            "user_id",
+            "display_name",
+            "email",
+            "role",
+            "invited_by_user_id",
+            "created_at",
+            "updated_at",
+        }
+        assert row["display_name"] == "Ada Lovelace"
+        assert row["email"] == "ada@acme.example"
+        assert row["role"] == SpaceRole.ADMIN.value
+        assert row["user_id"] == actor_id
+        assert row["invited_by_user_id"] is None
+
+    @pytest.mark.anyio
+    async def test_blank_display_name_is_empty_string_never_null(self):
+        from tessera_api.routers.members import list_members
+
+        space_id = uuid.uuid4()
+        actor_id = uuid.uuid4()
+        session = AsyncMock()
+        listings = [
+            _make_listing(
+                space_id, actor_id, SpaceRole.VIEWER,
+                display_name="", email="blank@acme.example",
+            )
+        ]
+
+        mock_user = AsyncMock()
+        mock_user.get_by_id.return_value = _make_user(actor_id)
+
+        mock_membership_repo = AsyncMock()
+        mock_membership_repo.list_by_space_with_identity.return_value = listings
+
+        with (
+            patch("tessera_api.routers.members.validate_space_for_company", new=AsyncMock(return_value=None)),
+            patch("tessera_api.routers.members.SqlUserRepository", return_value=mock_user),
+            patch("tessera_api.routers.members.SqlSpaceMembershipRepository", return_value=mock_membership_repo),
+        ):
+            result = await list_members(space_id, _ctx(actor_id), session)
+
+        (row,) = result["members"]
+        assert row["display_name"] == ""
+        assert row["display_name"] is not None
+        assert row["email"] == "blank@acme.example"
 
 
 class TestGetMyMembershipContract:

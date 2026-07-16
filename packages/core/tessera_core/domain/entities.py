@@ -25,6 +25,7 @@ from tessera_core.domain.refresh_token import RefreshToken
 from tessera_core.domain.role_permission import RolePermission
 from tessera_core.domain.source_artifact import SourceArtifact
 from tessera_core.domain.space import Space
+from tessera_core.domain.space_member_listing import SpaceMemberListing
 from tessera_core.domain.space_membership import SpaceMembership
 from tessera_core.domain.space_role import SpaceRole
 from tessera_core.domain.update_proposal import UpdateProposal
@@ -60,6 +61,7 @@ __all__ = [
     "RolePermission",
     "SourceArtifact",
     "Space",
+    "SpaceMemberListing",
     "SpaceMembership",
     "SpaceRole",
     "UpdateProposal",

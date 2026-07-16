@@ -1,16 +1,21 @@
-"""Integration tests: member management flows — invite, change-role, remove."""
+"""Integration tests: member management flows — invite, change-role, remove, list."""
 
 from __future__ import annotations
 
+import os
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+import sqlalchemy as sa
+
 from tessera_core.domain.entities import (
     CompanyMembership,
     CompanyRole,
     Space,
+    SpaceMemberListing,
     SpaceMembership,
     SpaceRole,
     User,
@@ -340,3 +345,235 @@ class TestRemoveMemberIntegration:
                     )
 
         assert resp.status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# Feature 065: identity-enriched member list
+# ---------------------------------------------------------------------------
+
+
+def _listing(
+    space_id: uuid.UUID,
+    user_id: uuid.UUID,
+    display_name: str,
+    email: str,
+    role: SpaceRole,
+) -> SpaceMemberListing:
+    now = datetime.now(UTC)
+    return SpaceMemberListing(
+        id=uuid.uuid4(),
+        space_id=space_id,
+        user_id=user_id,
+        display_name=display_name,
+        email=email,
+        role=role,
+        invited_by_user_id=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@contextmanager
+def _member_read_auth():
+    """Working HTTP auth context for member reads: overrides the get_db
+    dependency (conftest pattern) + company membership resolution + onboarding."""
+    from tessera_api.adapters.database import get_db
+    from tessera_api.main import app
+
+    now = datetime.now(UTC)
+
+    def _ms(uid, cid):
+        return CompanyMembership(
+            id=uuid.uuid4(), user_id=uid, company_id=cid, role=CompanyRole.MEMBER, joined_at=now
+        )
+
+    mock_session = AsyncMock()
+
+    async def _fake_db():
+        yield mock_session
+
+    company_repo = AsyncMock()
+    company_repo.get_membership = AsyncMock(side_effect=_ms)
+    company_repo.get_by_id = AsyncMock(return_value=None)
+
+    app.dependency_overrides[get_db] = _fake_db
+    try:
+        with (
+            _bypass_onboarding_guard(),
+            patch("tessera_api.auth.oidc.SqlCompanyRepository", return_value=company_repo),
+        ):
+            yield
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+class TestListMembersIdentityIntegration:
+    def test_list_returns_identity_fields_in_display_name_order(self):
+        from fastapi.testclient import TestClient
+
+        from tessera_api.main import app
+
+        space_id = uuid.uuid4()
+        actor_id = uuid.uuid4()
+        other_id = uuid.uuid4()
+        actor = _make_user(actor_id)
+
+        rows = [
+            _listing(space_id, actor_id, "Ada Lovelace", "ada@acme.example", SpaceRole.ADMIN),
+            _listing(space_id, other_id, "Grace Hopper", "grace@acme.example", SpaceRole.VIEWER),
+        ]
+
+        with (
+            _member_read_auth(),
+            patch(
+                "tessera_api.routers.members.validate_space_for_company",
+                new=AsyncMock(return_value=None),
+            ),
+            patch("tessera_api.routers.members.SqlUserRepository") as mock_user_repo_cls,
+            patch(
+                "tessera_api.routers.members.SqlSpaceMembershipRepository"
+            ) as mock_membership_repo_cls,
+        ):
+            mock_user_repo = AsyncMock()
+            mock_user_repo.get_by_id.return_value = actor
+            mock_user_repo_cls.return_value = mock_user_repo
+
+            mock_membership_repo = AsyncMock()
+            mock_membership_repo.list_by_space_with_identity.return_value = rows
+            mock_membership_repo_cls.return_value = mock_membership_repo
+
+            with TestClient(app) as client:
+                resp = client.get(
+                    f"/v1/spaces/{space_id}/members",
+                    headers=_make_jwt_header(actor_id),
+                )
+
+        assert resp.status_code == 200
+        members = resp.json()["members"]
+        assert len(members) == 2
+        for member in members:
+            assert member["display_name"]
+            assert member["email"]
+        assert [m["display_name"] for m in members] == ["Ada Lovelace", "Grace Hopper"]
+        # The enriched read is company-scoped with the token's active company.
+        mock_membership_repo.list_by_space_with_identity.assert_awaited_once_with(
+            space_id, COMPANY_ID
+        )
+
+    def test_cross_tenant_list_returns_generic_404_without_identity(self):
+        """Company A actor requesting Company B's space: generic 404, no identity leaks."""
+        from fastapi.testclient import TestClient
+
+        from tessera_api.main import app
+
+        space_id = uuid.uuid4()
+        actor_id = uuid.uuid4()
+
+        space_repo = AsyncMock()
+        space_repo.get_by_id_for_company = AsyncMock(return_value=None)
+
+        with (
+            _member_read_auth(),
+            patch("tessera_api.routers.spaces.SqlSpaceRepository", return_value=space_repo),
+            patch(
+                "tessera_api.routers.members.SqlSpaceMembershipRepository"
+            ) as mock_membership_repo_cls,
+        ):
+            mock_membership_repo = AsyncMock()
+            mock_membership_repo_cls.return_value = mock_membership_repo
+
+            with TestClient(app) as client:
+                resp = client.get(
+                    f"/v1/spaces/{space_id}/members",
+                    headers=_make_jwt_header(actor_id),
+                )
+
+        assert resp.status_code == 404
+        body = resp.json()
+        assert body["error"] == {"code": "not_found", "message": "Not found"}
+        assert "members" not in body
+        assert "@" not in resp.text  # no email of any member in the body
+        mock_membership_repo.list_by_space_with_identity.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Feature 065: repository-level tenant scoping (live PostgreSQL)
+# ---------------------------------------------------------------------------
+
+DB_URL = os.environ.get(
+    "DATABASE_URL", "postgresql+psycopg://tessera:tessera@localhost:5432/tessera"
+)
+
+
+def _db_reachable() -> bool:
+    try:
+        engine = sa.create_engine(DB_URL)
+        with engine.connect():
+            return True
+    except Exception:
+        return False
+
+
+requires_db = pytest.mark.skipif(
+    not _db_reachable(), reason="PostgreSQL not reachable — set DATABASE_URL to a live instance"
+)
+
+
+@requires_db
+class TestListBySpaceWithIdentityRepository:
+    @pytest.mark.anyio
+    async def test_returns_identity_rows_ordered_and_scoped_to_company(self):
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from tessera_api.adapters.models.company import CompanyModel
+        from tessera_api.adapters.models.space import SpaceModel
+        from tessera_api.adapters.models.space_membership import SpaceMembershipModel
+        from tessera_api.adapters.models.user import UserModel
+        from tessera_api.adapters.repositories.space_membership import (
+            SqlSpaceMembershipRepository,
+        )
+
+        engine = create_async_engine(DB_URL)
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as session:
+            users = []
+            for name in ("Zoe Last", "Abel First"):
+                user = UserModel(
+                    external_subject=f"sub-{uuid.uuid4()}",
+                    email=f"{uuid.uuid4()}@identity.test",
+                    display_name=name,
+                )
+                session.add(user)
+                users.append(user)
+            await session.flush()
+
+            company_a = CompanyModel(name="Identity Co A", admin_user_id=users[0].id)
+            company_b = CompanyModel(name="Identity Co B", admin_user_id=users[0].id)
+            session.add_all([company_a, company_b])
+            await session.flush()
+
+            space = SpaceModel(
+                slug=f"space-{uuid.uuid4()}",
+                name="Identity Space",
+                sector="eng",
+                company_id=company_a.id,
+            )
+            session.add(space)
+            await session.flush()
+
+            for user in users:
+                session.add(SpaceMembershipModel(space_id=space.id, user_id=user.id, role="viewer"))
+            await session.flush()
+
+            repo = SqlSpaceMembershipRepository(session)
+
+            rows = await repo.list_by_space_with_identity(space.id, company_a.id)
+            assert [r.display_name for r in rows] == ["Abel First", "Zoe Last"]
+            assert all(r.email.endswith("@identity.test") for r in rows)
+            assert all(isinstance(r, SpaceMemberListing) for r in rows)
+
+            # Wrong company: empty even though the space has members.
+            assert await repo.list_by_space_with_identity(space.id, company_b.id) == []
+
+            await session.rollback()
+        await engine.dispose()

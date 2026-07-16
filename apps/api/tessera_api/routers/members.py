@@ -23,7 +23,7 @@ from tessera_api.auth.oidc import (
     is_company_admin,
 )
 from tessera_api.routers.spaces import validate_space_for_company
-from tessera_core.domain.entities import SpaceRole
+from tessera_core.domain.entities import SpaceMembership, SpaceRole
 from tessera_core.permissions.access import can_manage_members, can_read_space_document
 from tessera_core.services.membership import MembershipService
 
@@ -121,14 +121,44 @@ async def list_members(
         raise HTTPException(status_code=401, detail="User not found")
 
     membership_repo = SqlSpaceMembershipRepository(session)
-    memberships = await membership_repo.list_by_space(space_id)
+    listings = await membership_repo.list_by_space_with_identity(space_id, company_id)
+
+    # The permission check needs bare memberships; derive them from the
+    # enriched rows instead of issuing a second list_by_space query.
+    memberships = [
+        SpaceMembership(
+            id=row.id,
+            space_id=row.space_id,
+            user_id=row.user_id,
+            role=row.role,
+            invited_by_user_id=row.invited_by_user_id,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+        for row in listings
+    ]
 
     if not can_read_space_document(
         actor, space_id, memberships, is_company_admin=company_admin
     ):
         raise HTTPException(status_code=403, detail="Not a member of this space")
 
-    return {"members": [m.model_dump() for m in memberships]}
+    return {
+        "members": [
+            {
+                "id": row.id,
+                "space_id": row.space_id,
+                "user_id": row.user_id,
+                "display_name": row.display_name,
+                "email": row.email,
+                "role": row.role.value,
+                "invited_by_user_id": row.invited_by_user_id,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            }
+            for row in listings
+        ]
+    }
 
 
 @router.get("/spaces/{space_id}/members/me")
